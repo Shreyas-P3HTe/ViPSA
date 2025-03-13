@@ -39,11 +39,11 @@ pip install PySimpleGUI opencv-python-headless threading zaber-motion pandas mat
 
 ## Usage
 
-1. **GUI**: Run the `GUI.py` script to launch the graphical user interface for controlling the stages, camera, and lights.
+1. **GUI**: Run the `Listmaker2.py` script to launch the graphical user interface for making voltage lists, visualize and save them.
 2. **Vision Processing**: Use the functions in `Vision.py` for capturing images and overlaying data.
 3. **Stage Control**: Utilize the classes in `Viewfinder3.py` and `Openflexture.py` to manage the connection and control of Arduino and Zaber stages.
 4. **Data Handling**: Use `Datahandling.py` for saving, plotting, and processing IV sweep and pulse measurement data.
-5. **Adaptive Testing**: Run the `Adaptive_t.py` script for adaptive testing using the ViPSA methods.
+5. **Writing scripts** : Combine various components from `Source_Measure_Unit.py` & `Datahandling.py` for constructing complex testing protocols with plotting.
 
 ## Contributing
 
@@ -55,5 +55,5 @@ This project is licensed under the MIT License. See the LICENSE file for more de
 
 ## Contact
 
-For any questions or issues, please contact the project maintainer at [email@example.com].
+For any questions or issues, please contact the project maintainer at [shreyaspethe97@gmail.com].
 
