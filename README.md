@@ -6,7 +6,6 @@ This repository contains the components for the ViPSA project. The components ar
 
 ## Directory Structure
 
-- **GUI.py**: Contains the graphical user interface for controlling the stages, camera, and lights.
 - **Vision.py**: Handles vision processing tasks such as capturing images and overlaying data.
 - **Viewfinder3.py**: Manages the connection and control of Arduino and Zaber stages, as well as the camera feed.
 - **Source_Measure_Unit.py**: Provides classes and methods for interacting with Keysight Source Measure Units (SMUs).
@@ -16,6 +15,8 @@ This repository contains the components for the ViPSA project. The components ar
 - **Datahandling.py**: Handles data saving, plotting, and processing for IV sweeps and pulse measurements.
 - **b2912a.py**: Library for controlling the B2912A instrument.
 - **Adaptive_t.py**: Script for adaptive testing using the ViPSA methods.
+
+- **GUI.py**: UNDER DEVELOPMENT : Contains the graphical user interface for controlling the stages, camera, and lights.
 
 ## Installation
 
