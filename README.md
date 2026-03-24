@@ -1,4 +1,4 @@
-# ViPSA Clean Migration
+# ViPSA - stable update 24/03/2026
 
 This repository is a fresh, structured migration of the original ViPSA working folder.
 
