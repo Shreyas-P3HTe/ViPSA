@@ -19,13 +19,117 @@ import pandas as pd
 import logging as log
 from pymeasure.instruments.keithley import Keithley2450
 
+
+def _warn_once(obj, attr_name, message):
+    if getattr(obj, attr_name, False):
+        return
+    print(message)
+    setattr(obj, attr_name, True)
+
+
+def _measurement_record(timestamp, v_cmd, current, v_meas=np.nan, cycle_number=np.nan):
+    v_cmd = float(v_cmd) if v_cmd is not None else np.nan
+    v_meas = float(v_meas) if v_meas is not None and not pd.isna(v_meas) else np.nan
+    return {
+        "Time(T)": float(timestamp) if timestamp is not None else np.nan,
+        "Voltage (V)": v_cmd,
+        "Current (A)": float(current) if current is not None else np.nan,
+        "V_cmd (V)": v_cmd,
+        "V_meas (V)": v_meas,
+        "V_error (V)": (v_meas - v_cmd) if not pd.isna(v_meas) and not pd.isna(v_cmd) else np.nan,
+        "Cycle Number": cycle_number,
+    }
+
+
+def _records_to_frame(records):
+    columns = [
+        "Time(T)",
+        "Voltage (V)",
+        "Current (A)",
+        "V_cmd (V)",
+        "V_meas (V)",
+        "V_error (V)",
+        "Cycle Number",
+    ]
+    if not records:
+        return pd.DataFrame(columns=columns)
+    frame = pd.DataFrame.from_records(records)
+    for column in columns:
+        if column not in frame.columns:
+            frame[column] = np.nan
+    return frame[columns]
+
+
+def _parse_keysight_trace(values, point_count, commanded_voltages, fallback_step):
+    raw_values = [item.strip() for item in str(values).split(",") if item.strip()]
+    if point_count <= 0:
+        return []
+    if not raw_values:
+        return [_measurement_record(index * fallback_step, v_cmd, np.nan, np.nan) for index, v_cmd in enumerate(commanded_voltages)]
+
+    if len(raw_values) % point_count != 0:
+        raise ValueError(
+            f"Trace length {len(raw_values)} does not divide evenly into {point_count} commanded points."
+        )
+
+    field_count = len(raw_values) // point_count
+    groups = []
+    for index in range(point_count):
+        chunk = raw_values[index * field_count:(index + 1) * field_count]
+        groups.append([float(value) for value in chunk])
+
+    columns = list(zip(*groups))
+    commanded = [float(value) for value in commanded_voltages]
+
+    def _is_monotonic(sequence):
+        finite = [value for value in sequence if np.isfinite(value)]
+        return len(finite) > 1 and all(b >= a - 1e-12 for a, b in zip(finite, finite[1:]))
+
+    time_index = None
+    best_span = -np.inf
+    for index, column in enumerate(columns):
+        if _is_monotonic(column):
+            span = column[-1] - column[0]
+            if span >= best_span:
+                best_span = span
+                time_index = index
+
+    voltage_index = None
+    best_error = np.inf
+    scale = max(1.0, max(abs(value) for value in commanded) if commanded else 1.0)
+    for index, column in enumerate(columns):
+        if index == time_index:
+            continue
+        error = np.nanmean(np.abs(np.asarray(column, dtype=float) - np.asarray(commanded, dtype=float)))
+        if error < best_error:
+            best_error = error
+            voltage_index = index
+    if voltage_index is not None and best_error > max(1e-6, 0.2 * scale):
+        voltage_index = None
+
+    current_index = None
+    for index in range(len(columns)):
+        if index in {time_index, voltage_index}:
+            continue
+        current_index = index
+        break
+
+    records = []
+    for index, v_cmd in enumerate(commanded):
+        group = groups[index]
+        timestamp = group[time_index] if time_index is not None else index * fallback_step
+        current = group[current_index] if current_index is not None else np.nan
+        v_meas = group[voltage_index] if voltage_index is not None else np.nan
+        records.append(_measurement_record(timestamp, v_cmd, current, v_meas))
+    return records
+
 class KeysightSMU():
     
     def __init__(self, device_no, address=None, switch=None, switch_channel=None, connect_switch=False):
         
         rm = pyvisa.ResourceManager()
         address_list = list(rm.list_resources())
-        self.address = address_list[device_no]
+        self.address = address if address is not None else address_list[device_no]
         
         print("Devices found :" , self.address)
         
@@ -41,13 +145,66 @@ class KeysightSMU():
         # Optional switching matrix that routes SMU to a given relay channel
         self.switch = switch
         self.switch_channel = switch_channel
-        if connect_switch and self.switch is not None and self.switch_channel is not None:
+        self.switch_profile = "keysight"
+        if connect_switch and self.switch is not None:
             try:
-                # Close the relay corresponding to this SMU's channel to establish connection
-                self.switch.close_channel(self.switch_channel)
-                print(f"Switch channel {self.switch_channel} closed for KeysightSMU")
+                self.connect_switch_path()
+                print("Switch path prepared for KeysightSMU")
             except Exception as e:
                 print(f"Warning: could not connect switch channel {self.switch_channel}: {e}")
+
+    def _open_resource(self, adr=None, timeout=10000):
+        if adr is None:
+            adr = self.address
+
+        rm = pyvisa.ResourceManager()
+        smu = rm.open_resource(adr)
+        smu.read_termination = "\n"
+        smu.write_termination = "\n"
+        smu.timeout = timeout
+        return smu
+
+    def connect_switch_path(self):
+        if self.switch is None:
+            return
+
+        route = self.switch_channel if self.switch_channel is not None else self.switch_profile
+        route_name = route.lower() if isinstance(route, str) else None
+
+        if hasattr(self.switch, "connect_named_route") and route_name in {"keithley", "keysight"}:
+            self.switch.connect_named_route(route_name)
+            return
+
+        if route_name == "all" and hasattr(self.switch, "open_all"):
+            self.switch.open_all()
+            return
+
+        if hasattr(self.switch, "open_all"):
+            self.switch.open_all()
+        self.switch.close_channel(route)
+
+    def disconnect_switch_path(self):
+        if self.switch is None:
+            return
+
+        if hasattr(self.switch, "open_all"):
+            self.switch.open_all()
+            return
+
+        if self.switch_channel is not None:
+            self.switch.open_channel(self.switch_channel)
+
+    def close_session(self):
+        """KeysightSMU uses short-lived VISA sessions, so there is nothing persistent to close."""
+        try:
+            self.abort_measurement()
+        except Exception:
+            pass
+
+        try:
+            self.disconnect_switch_path()
+        except Exception:
+            pass
                   
     def get_address(self):
         
@@ -101,6 +258,65 @@ class KeysightSMU():
         except Exception as e:
             print("Error sending :", e)
 
+    def write(self, command, adr=None):
+        smu = self._open_resource(adr=adr)
+        try:
+            smu.write(command)
+        finally:
+            smu.close()
+
+    def ask(self, command, adr=None):
+        smu = self._open_resource(adr=adr)
+        try:
+            return smu.query(command)
+        finally:
+            smu.close()
+
+    def prepare_contact_probe(self, voltage, compliance, adr=None):
+        self.connect_switch_path()
+        smu = self._open_resource(adr=adr)
+        try:
+            smu.write("*RST")
+            smu.write("*CLS")
+            smu.write("SOUR:FUNC VOLT")
+            smu.write('SENS:FUNC "CURR"')
+            smu.write(f"SOUR:VOLT {voltage}")
+            smu.write(f"SENS:CURR:PROT {compliance}")
+            smu.write("OUTP ON")
+        finally:
+            smu.close()
+
+    def stop_output(self, adr=None):
+        smu = None
+        try:
+            smu = self._open_resource(adr=adr, timeout=5000)
+            for command in (":OUTP OFF", "OUTP OFF", ":OUTP1 OFF", ":OUTP2 OFF"):
+                try:
+                    smu.write(command)
+                except Exception:
+                    continue
+        finally:
+            if smu is not None:
+                smu.close()
+
+    def abort_measurement(self, adr=None):
+        smu = None
+        try:
+            smu = self._open_resource(adr=adr, timeout=5000)
+            for command in (":ABOR", "ABOR"):
+                try:
+                    smu.write(command)
+                except Exception:
+                    continue
+            for command in (":OUTP OFF", "OUTP OFF", ":OUTP1 OFF", ":OUTP2 OFF"):
+                try:
+                    smu.write(command)
+                except Exception:
+                    continue
+        finally:
+            if smu is not None:
+                smu.close()
+
             
     def get_contact_current(self, voltage, compliance=10e-6, adr=None):
             
@@ -125,7 +341,9 @@ class KeysightSMU():
                     
             SMU.write('OUTP ON')
     
-            current = abs(float(SMU.query('READ?')))
+            response = SMU.query('READ?').strip()
+            parts = [part.strip() for part in response.split(',') if part.strip()]
+            current = abs(float(parts[1] if len(parts) >= 2 else parts[0]))
             print(f": Contact_current = {current} A")
                 
             SMU.write('OUTP OFF')
@@ -331,6 +549,7 @@ class KeysightSMU():
             adr = self.address
         
         rm = pyvisa.ResourceManager()
+        self.connect_switch_path()
         
         try:
             SMU = rm.open_resource(adr)
@@ -360,6 +579,8 @@ class KeysightSMU():
             return data
         except Exception as e:
             print("Error measuring current :", e)
+        finally:
+            self.disconnect_switch_path()
      
         
     def list_IV_sweep_manual(self, csv_path, pos_compliance, neg_compliance, delay=None, adr=None):
@@ -374,6 +595,7 @@ class KeysightSMU():
             adr = self.address
         
         rm = pyvisa.ResourceManager()
+        self.connect_switch_path()
         
         try :
             SMU = rm.open_resource(adr)
@@ -439,6 +661,8 @@ class KeysightSMU():
         
         except Exception as e:
             print("ERROR during list sweep:", e)
+        finally:
+            self.disconnect_switch_path()
 
 
     def scan_read_vlist(self, dev, voltage_list, set_width, set_acquire_delay, current_compliance, set_range=None):
@@ -447,6 +671,8 @@ class KeysightSMU():
         Sends the list of voltages
         Returns the read current
         """
+        values = None
+
         try :
             print("I am in scan_read_vlist")
             
@@ -457,9 +683,11 @@ class KeysightSMU():
             print(pulse_no)
             
             dev.write("*RST")
+            dev.write_termination = "\n"
+            dev.read_termination = "\n"
         
             log.info("FORMAT")
-            dev.write(":FORM:ELEM:SENS TIME,CURR")
+            dev.write(":FORM:ELEM:SENS VOLT,CURR,TIME")
             #get_error(dev)
         
             # Set source
@@ -544,47 +772,27 @@ class KeysightSMU():
             log.info(values)
             
         except Exception as e :
-            print("Error in the scan_read_vlist:", e)
+            raise RuntimeError(f"Keysight scan_read_vlist failed: {type(e).__name__}: {e}") from e
         
         # TIME CURR STAT
         
-        currents = []
-        timestamps = []
-        datadict = []
-        
-        # Assume that data is all comma-separated
-        
-        data_split = values.split(',')
-      
-        
-        for i in range(len(data_split)):
-            
-            #print(f"Current value is i = {i}")
-            # current first then time, due to convention from b2912a.
-            
-            if np.mod(i,2) == 0:
-                currents.append(data_split[i])
-    
-            elif np.mod(i,2) == 1:
-                timestamps.append(data_split[i])
-            else:
-                # np.mod(i,3) == 2
-                pass
-                #datadict['Status'].append(data_split[i])
-        #print (timestamps, currents)
-        
-        for i in range(len(voltage_list)):
-            
-            datadict.append((timestamps[i], voltage_list[i], currents[i]))
-        
-        #print(datadict)
-        
-        datadict = np.array(datadict)
-            
-        return datadict
+        records = _parse_keysight_trace(
+            values=values,
+            point_count=len(voltage_list),
+            commanded_voltages=voltage_list,
+            fallback_step=set_width,
+        )
+        if records and all(pd.isna(record["V_meas (V)"]) for record in records):
+            _warn_once(
+                self,
+                "_warned_missing_keysight_voltage_readback",
+                "Warning: Keysight trace did not expose usable voltage readback; V_meas column will be NaN for this mode.",
+            )
+        return records
        
     def list_IV_sweep_split(self, csv_path, pos_compliance, neg_compliance, SMU_range = None, 
-                            delay = None, acq_delay = None, adr = None, pos_channel = None, neg_channel = None):     
+                            delay = None, acq_delay = None, adr = None, pos_channel = None, neg_channel = None,
+                            include_read_probe = True, read_probe_mode="between_segments"):     
         
         """
         Arguments
@@ -634,12 +842,15 @@ class KeysightSMU():
         vlist = file_df.iloc[:,1].tolist()
         splits = self.split_list(vlist)
         vlist_resistance = self.resistsnce_df.iloc[:,1].tolist()
+        self.connect_switch_path()
 
         try:
 
             rm = pyvisa.ResourceManager()
             SMU = rm.open_resource(adr)
             SMU.timeout = 30000000
+            SMU.write_termination = "\n"
+            SMU.read_termination = "\n"
             data_array = []
             resistance_array = []
 
@@ -662,10 +873,12 @@ class KeysightSMU():
                     res_range = 10e-4
                     res_compliance = 10e-3
                 
-                data_resistance =  self.scan_read_vlist(SMU, voltage_list = vlist_resistance, 
-                                                        set_width=10e-4, set_acquire_delay=5e-4,
-                                                        current_compliance = res_compliance,
-                                                        set_range= res_range)
+                data_resistance = []
+                if include_read_probe and read_probe_mode == "between_segments":
+                    data_resistance =  self.scan_read_vlist(SMU, voltage_list = vlist_resistance, 
+                                                            set_width=10e-4, set_acquire_delay=5e-4,
+                                                            current_compliance = res_compliance,
+                                                            set_range= res_range)
                     
                 
                 data = self.scan_read_vlist(SMU, voltage_list = vlist_cycle, set_width = delay, set_acquire_delay = acq_delay, 
@@ -679,10 +892,15 @@ class KeysightSMU():
             return data_array, resistance_array
 
         except Exception as e:
-            print("ERROR during list sweep:", e)
+            raise RuntimeError(f"Keysight list_IV_sweep_split failed at {adr}: {type(e).__name__}: {e}") from e
+        finally:
+            self.disconnect_switch_path()
 
-    def list_IV_sweep_split_4(self, csv_path, pos_compliance, neg_compliance, SMU_range = None, 
-                            delay = None, acq_delay = None, adr = None, pos_channel = None, neg_channel = None):     
+    def list_IV_sweep_split_4(self, csv_path, pos_compliance=None, neg_compliance=None, SMU_range = None, 
+                            delay = None, acq_delay = None, adr = None, pos_channel = None, neg_channel = None,
+                            include_read_probe = True, compliance_pf=None, compliance_pb=None,
+                            compliance_nf=None, compliance_nb=None, wait_time=None, progress_callback=None,
+                            read_probe_mode="between_segments"):     
         
         """
         Arguments
@@ -728,23 +946,43 @@ class KeysightSMU():
         
         if SMU_range is None :
             SMU_range = 10e-3
+
+        if pos_compliance is None:
+            pos_compliance = compliance_pf if compliance_pf is not None else compliance_pb
+        if neg_compliance is None:
+            neg_compliance = compliance_nf if compliance_nf is not None else compliance_nb
+        if pos_compliance is None or neg_compliance is None:
+            raise ValueError("Keysight list_IV_sweep_split_4 requires either pos/neg compliance or 4-way compliance values.")
+
+        compliance_map = {
+            "pf": compliance_pf if compliance_pf is not None else pos_compliance,
+            "pb": compliance_pb if compliance_pb is not None else pos_compliance,
+            "nf": compliance_nf if compliance_nf is not None else neg_compliance,
+            "nb": compliance_nb if compliance_nb is not None else neg_compliance,
+        }
         
         vlist = file_df.iloc[:,1].tolist()
         splits = self.split_list_by_4(vlist) #pf, pb, nf, nb
         vlist_resistance = self.resistsnce_df.iloc[:,1].tolist()
+        self.connect_switch_path()
 
         try:
 
             rm = pyvisa.ResourceManager()
             SMU = rm.open_resource(adr)
             SMU.timeout = 30000000
+            SMU.write_termination = "\n"
+            SMU.read_termination = "\n"
             data_array = []
             resistance_array = []
 
             for split in splits:
+                if wait_time:
+                    time.sleep(wait_time)
 
-                compliance = (pos_compliance if (split[1] == 'pf' or split[1] == 'pb') else neg_compliance)
+                compliance = compliance_map[split[1]]
                 SMU_range = (10e-3 if split[1]=='pf' else 10e-4)
+                data_resistance = []
                 #channel = (pos_channel if split[1] == 'p' else neg_channel)  # channel swapping not enabled yet
                 print("Cycle n0.:",split[0], " compliance :", compliance)
                 vlist_cycle = split[2]
@@ -760,7 +998,7 @@ class KeysightSMU():
                     res_range = 10e-4
                     res_compliance = 10e-3
                 
-                if (split[1] == 'pb' or split[1] == 'nb'):
+                if include_read_probe and read_probe_mode == "between_segments" and (split[1] == 'pb' or split[1] == 'nb'):
                     data_resistance =  self.scan_read_vlist(SMU, voltage_list = vlist_resistance, 
                                                             set_width=10e-4, set_acquire_delay=5e-4,
                                                             current_compliance = res_compliance,
@@ -778,16 +1016,29 @@ class KeysightSMU():
             return data_array, resistance_array
 
         except Exception as e:
-            print("ERROR during list sweep:", e)
+            raise RuntimeError(f"Keysight list_IV_sweep_split_4 failed at {adr}: {type(e).__name__}: {e}") from e
+        finally:
+            self.disconnect_switch_path()
 
     
-    def pulsed_measurement(self, csv_path, current_compliance, set_width=0.01, bare_list = None, set_acquire_delay = None, adr = None):
+    def pulsed_measurement(self, csv_path, current_compliance=None, set_width=0.01, bare_list = None,
+                           set_acquire_delay = None, adr = None, compliance=None, pulse_width=None,
+                           current_autorange=False):
         
         if adr == None:
             adr = self.address
+
+        if current_compliance is None:
+            current_compliance = compliance
+        if current_compliance is None:
+            raise ValueError("Keysight pulsed_measurement requires a compliance/current_compliance value.")
+
+        if pulse_width is not None:
+            set_width = pulse_width
             
         if set_acquire_delay == None :
             set_acquire_delay = set_width/2
+        self.connect_switch_path()
         
         try :
             
@@ -795,6 +1046,8 @@ class KeysightSMU():
             SMU = rm.open_resource(adr)
             print("SMU is : ", SMU)
             SMU.timeout = 30000000
+            SMU.write_termination = "\n"
+            SMU.read_termination = "\n"
             
             
             if bare_list :
@@ -808,13 +1061,16 @@ class KeysightSMU():
                 tlist = df.iloc[:, 0].tolist()
             
             print("now calling scan read bla bla")
-            data = self.scan_read_vlist(SMU, vlist, set_width, set_acquire_delay, current_compliance, 10e-3)
+            scan_range = None if current_autorange else 10e-3
+            data = self.scan_read_vlist(SMU, vlist, set_width, set_acquire_delay, current_compliance, scan_range)
             #print (data)
             return data
             
             SMU.close()
         except Exception as e:
-            print("ERROR during list sweep:", e) 
+            raise RuntimeError(f"Keysight pulsed_measurement failed at {adr}: {type(e).__name__}: {e}") from e 
+        finally:
+            self.disconnect_switch_path()
             
     def response_dealer(self,raw_response):
 
@@ -1198,58 +1454,6 @@ class KeysightSMU():
         
         return datadict  
     
-class Keithley707B:
-    """Simple wrapper for a Keithley 707B switch matrix using SCPI via VISA.
-
-    This class provides minimal methods to open/close relay channels. Channel
-    identifiers are passed as integers or strings matching the instrument's
-    channel numbering (e.g. 101, 102 or 1,2). Commands use the common SCPI
-    routing commands ":ROUT:CLOS" and ":ROUT:OPEN". Adjust commands if your
-    matrix uses a different dialect.
-    """
-
-    def __init__(self, device_no=0, address=None):
-        rm = pyvisa.ResourceManager()
-        address_list = list(rm.list_resources())
-        self.address = address if address is not None else address_list[device_no]
-        self.rm = rm
-
-    def _format_channels(self, channels):
-        if isinstance(channels, (list, tuple)):
-            return ",".join(str(c) for c in channels)
-        return str(channels)
-
-    def close_channel(self, channel):
-        """Close (connect) one or multiple channels.
-
-        channel can be an int, str, or list/tuple of ints/strs.
-        """
-        chs = self._format_channels(channel)
-        try:
-            dev = self.rm.open_resource(self.address)
-            dev.write(f":ROUT:CLOS (@{chs})")
-            dev.close()
-        except Exception as e:
-            raise
-
-    def open_channel(self, channel):
-        """Open (disconnect) one or multiple channels."""
-        chs = self._format_channels(channel)
-        try:
-            dev = self.rm.open_resource(self.address)
-            dev.write(f":ROUT:OPEN (@{chs})")
-            dev.close()
-        except Exception as e:
-            raise
-
-    def reset(self):
-        try:
-            dev = self.rm.open_resource(self.address)
-            dev.write("*RST")
-            dev.close()
-        except Exception:
-            pass
-
 
 class KeithleySMU():
     
@@ -1271,10 +1475,11 @@ class KeithleySMU():
         # optional switch matrix and channel assignment
         self.switch = switch
         self.switch_channel = switch_channel
-        if connect_switch and self.switch is not None and self.switch_channel is not None:
+        self.switch_profile = "keithley"
+        if connect_switch and self.switch is not None:
             try:
-                self.switch.close_channel(self.switch_channel)
-                print(f"Switch channel {self.switch_channel} closed for KeithleySMU")
+                self.connect_switch_path()
+                print("Switch path prepared for KeithleySMU")
             except Exception as e:
                 print(f"Warning: could not connect switch channel {self.switch_channel}: {e}")
 
@@ -1295,6 +1500,49 @@ class KeithleySMU():
         )
         self.resistance_df = pd.read_csv(self.tiny_IV)
 
+    def connect_switch_path(self):
+        if self.switch is None:
+            return
+
+        route = self.switch_channel if self.switch_channel is not None else self.switch_profile
+        route_name = route.lower() if isinstance(route, str) else None
+
+        if hasattr(self.switch, "connect_named_route") and route_name in {"keithley", "keysight"}:
+            self.switch.connect_named_route(route_name)
+            return
+
+        self.switch.close_channel(route)
+
+    def disconnect_switch_path(self):
+        if self.switch is None:
+            return
+
+        if hasattr(self.switch, "open_all"):
+            self.switch.open_all()
+            return
+
+        if self.switch_channel is not None:
+            self.switch.open_channel(self.switch_channel)
+
+    def close_session(self):
+        try:
+            self.abort_measurement()
+        except Exception:
+            pass
+
+        try:
+            self.disconnect_switch_path()
+        except Exception:
+            pass
+
+        try:
+            adapter = getattr(self.smu, "adapter", None)
+            connection = getattr(adapter, "connection", None)
+            if connection is not None:
+                connection.close()
+        except Exception:
+            pass
+
     #------------------------- Utility -----------------------------
 
     def get_address(self):
@@ -1311,6 +1559,29 @@ class KeithleySMU():
     def ask(self, command):
         response = self.smu.ask(command)
         return response
+
+    def prepare_contact_probe(self, voltage, compliance):
+        self.connect_switch_path()
+        self.smu.write(":ROUT:TERM REAR")
+        self.smu.apply_voltage()
+        self.smu.measure_current()
+        self.smu.compliance_current = compliance
+        self.smu.write(f":SENS:CURR:PROT {compliance}")
+        self.smu.write(f":SOUR:VOLT:LEV {voltage}")
+        self.smu.write(":OUTP ON")
+
+    def stop_output(self):
+        self.smu.write(":OUTP OFF")
+
+    def abort_measurement(self):
+        try:
+            self.smu.write(":ABOR")
+        except Exception:
+            pass
+        try:
+            self.smu.write(":OUTP OFF")
+        except Exception:
+            pass
         
         
     #------------------------- Quick probe -------------------------
@@ -1373,7 +1644,8 @@ class KeithleySMU():
             print("Error in get_contact_current_fast:", e)
             return 0.0
 
-    def run_read_probe(self, read_vlist, compliance=1e-3, delay=1e-3, nplc=0.01, label="probe"):
+    def run_read_probe(self, read_vlist, compliance=1e-3, delay=1e-3, nplc=0.01, label="probe",
+                       progress_callback=None, stream_chunk=25):
         """
         Simple read-probe: step through a small voltage list and record current.
         Uses PyMeasure properties (no manual SCPI), so it's safe and consistent.
@@ -1401,16 +1673,31 @@ class KeithleySMU():
         self.smu.compliance_current = compliance
         self.smu.write(f":SENS:CURR:NPLC {nplc}")
     
+        _warn_once(
+            self,
+            "_warned_missing_keithley_voltage_readback",
+            "Warning: Keithley DCIV sweep path does not provide reliable sensed voltage readback here; V_meas column will be NaN for this mode.",
+        )
+
         data = []
+        pending = []
         t0 = time.perf_counter()
         for v in read_vlist:
             self.smu.source_voltage = float(v)
             time.sleep(delay)
             i = float(self.smu.current)
             ts = time.perf_counter() - t0
-            data.append((ts, float(v), i))
+            point = _measurement_record(ts, float(v), i, np.nan)
+            data.append(point)
+            pending.append((ts, float(v), i))
+            if callable(progress_callback) and len(pending) >= stream_chunk:
+                progress_callback(pending)
+                pending = []
+
+        if callable(progress_callback) and pending:
+            progress_callback(pending)
     
-        return np.array(data)
+        return data
 
     #------------------------- Segment detection -------------------
 
@@ -1551,11 +1838,15 @@ class KeithleySMU():
         delay=None,
         nplc=0.01,
         wait_time=0.0,
+        progress_callback=None,
+        include_read_probe=True,
+        read_probe_mode="between_segments",
                     ):
             """
             Keithley/PyMeasure version of 4-way split sweep.
             Returns (data_array, resistance_array) as np.arrays of (t, v, i).
             """
+            self.connect_switch_path()
         
             df = pd.read_csv(csv_path, dtype=float)
             times = df.iloc[:, 0].astype(float).to_numpy()
@@ -1608,7 +1899,7 @@ class KeithleySMU():
         
                 # Optional: state-aware probe after finishing a polarity return-to-zero segment
                 # This mimics your Keysight "pb/nb" probe behavior.
-                if tag in ("pb", "nb"):
+                if include_read_probe and read_probe_mode == "between_segments" and tag in ("pb", "nb"):
                     probe_comp = 1e-6 if tag == "pb" else 1e-5
                     probe = self.run_read_probe(
                         vlist_resistance,
@@ -1616,6 +1907,7 @@ class KeithleySMU():
                         delay=1e-5,
                         nplc=nplc,
                         label="HRS read-probe" if tag == "pb" else "LRS read-probe",
+                        progress_callback=progress_callback,
                     )
                     resistance_array.extend(probe)
         
@@ -1630,15 +1922,21 @@ class KeithleySMU():
                 )
         
                 for s in segments:
-                    chunk = self.run_linear_segment(s, compliance=comp, delay_input=delay)
+                    chunk = self.run_linear_segment(
+                        s,
+                        compliance=comp,
+                        delay_input=delay,
+                        progress_callback=progress_callback,
+                    )
                     data_array.extend(chunk)
         
             self.smu.write(":OUTP OFF")
+            self.disconnect_switch_path()
             return np.array(data_array), np.array(resistance_array)
 
     #------------------------- Core sweep ----------------------------
 
-    def run_linear_segment(self, seg, compliance, delay_input = None):
+    def run_linear_segment(self, seg, compliance, delay_input = None, progress_callback=None, stream_chunk=25):
         """
         Execute one sweep/hold segment on the Keithley.
         Returns list of (time, voltage, current).
@@ -1656,8 +1954,15 @@ class KeithleySMU():
         self.smu.current_range = compliance*10
         self.smu.compliance_current = compliance
         self.smu.source_voltage = vstart
+        _warn_once(
+            self,
+            "_warned_missing_keithley_voltage_readback",
+            "Warning: Keithley DCIV sweep path does not provide reliable sensed voltage readback here; V_meas column will be NaN for this mode.",
+        )
 
         currents, voltages, timestamps = [], [], []
+        records = []
+        pending = []
         t0 = time.perf_counter()
 
         if seg_type == "hold":
@@ -1671,6 +1976,11 @@ class KeithleySMU():
                 currents.append(current)
                 voltages.append(vstart)
                 timestamps.append(now)
+                records.append(_measurement_record(now, vstart, current, np.nan))
+                pending.append((now, vstart, current))
+                if callable(progress_callback) and len(pending) >= stream_chunk:
+                    progress_callback(pending)
+                    pending = []
         else:  # linear
             for v in np.arange(vstart, vstop + vstep, vstep):
                 self.smu.source_voltage = v
@@ -1680,8 +1990,16 @@ class KeithleySMU():
                 currents.append(current)
                 voltages.append(v)
                 timestamps.append(now)
+                records.append(_measurement_record(now, v, current, np.nan))
+                pending.append((now, v, current))
+                if callable(progress_callback) and len(pending) >= stream_chunk:
+                    progress_callback(pending)
+                    pending = []
 
-        return list(zip(timestamps, voltages, currents))
+        if callable(progress_callback) and pending:
+            progress_callback(pending)
+
+        return records
 
     def list_IV_sweep_split(
         self,
@@ -1694,12 +2012,16 @@ class KeithleySMU():
         adr=None,
         pos_channel=None,
         neg_channel=None,
-        wait_time=None
+        wait_time=None,
+        progress_callback=None,
+        include_read_probe=True,
+        read_probe_mode="between_segments",
     ):
         """
         Backward-compatible: returns (data_array, resistance_array)
         each as np.array of (timestamp, voltage, current).
         """
+        self.connect_switch_path()
         df = pd.read_csv(csv_path, dtype=float)
         times = df.iloc[:, 0].tolist()
         volts = df.iloc[:, 1].tolist()
@@ -1727,12 +2049,13 @@ class KeithleySMU():
             segments = self.identify_linear_segments(vlist, times_cycle, delay_input = delay)
             
             #state-aware resistance probe (tiny read, gentle timing)
-            probe_chunk = self.run_read_probe(vlist_resistance,
-                                              compliance=1e-6 if tag== "p" else 1e-5,
-                                              delay=1e-5,
-                                              label="HRS read-probe" if tag== "p" else "LRS read-probe")
-
-            resistance_array.extend(probe_chunk)
+            if include_read_probe and read_probe_mode == "between_segments":
+                probe_chunk = self.run_read_probe(vlist_resistance,
+                                                  compliance=1e-6 if tag== "p" else 1e-5,
+                                                  delay=1e-5,
+                                                  label="HRS read-probe" if tag== "p" else "LRS read-probe",
+                                                  progress_callback=progress_callback)
+                resistance_array.extend(probe_chunk)
 
             print(f"\nCycle {cycle_no} ({tag}, compliance: {comp}): {len(segments)} segment(s)")
             for seg in segments:
@@ -1744,12 +2067,18 @@ class KeithleySMU():
     
             # run segments
             for seg in segments:
-                sweep_chunk = self.run_linear_segment(seg, comp, delay_input=delay)
+                sweep_chunk = self.run_linear_segment(
+                    seg,
+                    comp,
+                    delay_input=delay,
+                    progress_callback=progress_callback,
+                )
                 data_array.extend(sweep_chunk)
 
             
         
         self.smu.write(":OUTP OFF")
+        self.disconnect_switch_path()
         return np.array(data_array), np.array(resistance_array)
 
     #------------------------- Pulsed ------------------------------
@@ -1762,6 +2091,7 @@ class KeithleySMU():
         bare_list=None,
         set_acquire_delay=None,
         adr=None,
+        current_autorange=False,
     ):
         """
         Pulsed measurement for Keithley 2450.
@@ -1773,6 +2103,7 @@ class KeithleySMU():
             Array of shape (N, 3):
             [relative_timestamp_s, source_voltage_V, measured_current_A]
         """
+        self.connect_switch_path()
         if adr is None:
             adr = self.address
 
@@ -1818,8 +2149,9 @@ class KeithleySMU():
             smu.write(":SENS:CURR:RANG:AUTO ON")
             smu.write(":SENS:CURR:NPLC 0.01")
 
-            # Keep format simple: current only
-            smu.write(":FORM:ELEM CURR")
+            # Capture both voltage readback and current so the saved CSV can
+            # verify the applied waveform against the commanded setpoint.
+            smu.write(":FORM:ELEM VOLT,CURR")
 
             smu.write(":OUTP ON")
 
@@ -1854,11 +2186,19 @@ class KeithleySMU():
                     if wait > 0.002:
                         time.sleep(wait - 0.001)
 
-                # READ? performs a measurement and returns current
-                current = float(smu.query(":READ?").strip().split(",")[0])
+                response = [part.strip() for part in smu.query(":READ?").strip().split(",") if part.strip()]
+                if len(response) >= 2:
+                    v_meas = float(response[0])
+                    current = float(response[1])
+                elif len(response) == 1:
+                    v_meas = np.nan
+                    current = float(response[0])
+                else:
+                    v_meas = np.nan
+                    current = np.nan
 
                 timestamp = time.perf_counter() - t0
-                data.append((timestamp, v, current))
+                data.append(_measurement_record(timestamp, v, current, v_meas))
 
                 # Return to zero after pulse
                 smu.write(":SOUR:VOLT 0")
@@ -1867,7 +2207,7 @@ class KeithleySMU():
                 next_start = pulse_start + set_width
 
             smu.write(":OUTP OFF")
-            return np.array(data, dtype=float)
+            return data
 
         except Exception as e:
             print("Error during single pulse measurement:", e)
@@ -1880,3 +2220,129 @@ class KeithleySMU():
                     smu.close()
             except Exception:
                 pass
+            self.disconnect_switch_path()
+
+
+class Keithley707B:
+    """Wrapper for the Keithley 707B switch matrix using slot/row/column channels.
+
+    Default routes encoded here:
+    - Keithley 2450: column 1 -> row A, column 3 -> row B
+    - Keysight SMU: column 2 -> row A, column 4 -> row B
+
+    Channel strings are formatted as `slot + row + column`, for example:
+    - slot 1, row A, column 1 -> `1A01`
+    - slot 1, row B, column 4 -> `1B04`
+    """
+
+    DEFAULT_SLOT = 1
+    ROUTE_MAP = {
+        "keithley": (("A", 1), ("B", 3)),
+        "keysight": (("A", 2), ("B", 4)),
+    }
+
+    def __init__(self, device_no=0, address=None, slot=DEFAULT_SLOT):
+        rm = pyvisa.ResourceManager()
+        address_list = list(rm.list_resources())
+        self.address = address if address is not None else address_list[device_no]
+        self.rm = rm
+        self.slot = int(slot)
+
+    def _open_device(self):
+        dev = self.rm.open_resource(self.address)
+        dev.timeout = 10000
+        dev.write_termination = "\n"
+        dev.read_termination = "\n"
+        return dev
+
+    def build_channel(self, row, column, slot=None):
+        slot = self.slot if slot is None else int(slot)
+        row = str(row).strip().upper()
+        column = int(column)
+        return f"{slot}{row}{column:02d}"
+
+    def _normalize_channel(self, channel):
+        if isinstance(channel, dict):
+            return self.build_channel(
+                row=channel["row"],
+                column=channel["column"],
+                slot=channel.get("slot", self.slot),
+            )
+
+        if isinstance(channel, tuple):
+            if len(channel) == 2:
+                return self.build_channel(channel[0], channel[1])
+            if len(channel) == 3:
+                return self.build_channel(channel[1], channel[2], slot=channel[0])
+
+        if isinstance(channel, str):
+            text = channel.strip()
+            lowered = text.lower()
+            if lowered in {"all", "allslots"}:
+                return "allslots"
+            return text.upper()
+
+        return str(channel)
+
+    def _format_channels(self, channels):
+        if isinstance(channels, list):
+            return ",".join(self._normalize_channel(channel) for channel in channels)
+        return self._normalize_channel(channels)
+
+    def write_tsp(self, command):
+        dev = self._open_device()
+        try:
+            dev.write(command)
+        finally:
+            dev.close()
+
+    def query_tsp(self, expression):
+        dev = self._open_device()
+        try:
+            dev.write(f"print({expression})")
+            return dev.read().strip()
+        finally:
+            dev.close()
+
+    def close_channel(self, channel):
+        chs = self._format_channels(channel)
+        self.write_tsp(f'channel.close("{chs}")')
+
+    def open_channel(self, channel):
+        chs = self._format_channels(channel)
+        self.write_tsp(f'channel.open("{chs}")')
+
+    def open_all(self):
+        self.write_tsp('channel.open("allslots")')
+
+    def get_closed_channels(self):
+        return self.query_tsp('channel.getclose("allslots")')
+
+    def get_route_channels(self, route_name, slot=None):
+        route_key = route_name.lower()
+        if route_key not in self.ROUTE_MAP:
+            raise ValueError(f"Unknown 707B route '{route_name}'")
+        return [
+            self.build_channel(row=row, column=column, slot=slot)
+            for row, column in self.ROUTE_MAP[route_key]
+        ]
+
+    def connect_named_route(self, route_name, slot=None):
+        route_key = route_name.lower()
+        channels = self.get_route_channels(route_key, slot=slot)
+        if route_key == "keysight":
+            self.open_all()
+        self.close_channel(channels)
+        return channels
+
+    def connect_keithley_smu(self, slot=None):
+        return self.connect_named_route("keithley", slot=slot)
+
+    def connect_keysight_smu(self, slot=None):
+        return self.connect_named_route("keysight", slot=slot)
+
+    def reset(self):
+        try:
+            self.write_tsp("reset()")
+        except Exception:
+            pass

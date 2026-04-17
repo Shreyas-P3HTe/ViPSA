@@ -1,0 +1,10 @@
+Environment problem was causing PysimpleGUI based Testmaker to not work, so we are now going to shift things to tkinter
+
+Features to be added to GUI_crossbar_tk and GUI_standalone_SMU_tk :
+    1. Autoranging turn on and off
+    2. Split by 4 turn on and off
+    3. Live graph plotting
+    4. Metadata saving
+    5. Option to save the graph
+
+Linux doesn't allow tkinter to directly launch the GUI - they need a helper script to modify the permissions 

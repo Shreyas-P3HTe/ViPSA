@@ -1,0 +1,552 @@
+flowchart LR
+    subgraph node_vipsa_analysis_group[vipsa.analysis]
+    node_vipsa_analysis["vipsa.analysis"]
+    end
+    subgraph node_vipsa_analysis_Vision_group[vipsa.analysis.Vision]
+    node_vipsa_analysis_Vision["vipsa.analysis.Vision"]
+    node_vipsa_analysis_Vision__overlay("overlay")
+    node_vipsa_analysis_Vision --> node_vipsa_analysis_Vision__overlay
+    node_vipsa_analysis_Vision__draw_x_rot("draw_x_rot")
+    node_vipsa_analysis_Vision --> node_vipsa_analysis_Vision__draw_x_rot
+    node_vipsa_analysis_Vision__start_camera("start_camera")
+    node_vipsa_analysis_Vision --> node_vipsa_analysis_Vision__start_camera
+    node_vipsa_analysis_Vision__capture_image("capture_image")
+    node_vipsa_analysis_Vision --> node_vipsa_analysis_Vision__capture_image
+    node_vipsa_analysis_Vision__get_thresholds("get_thresholds")
+    node_vipsa_analysis_Vision --> node_vipsa_analysis_Vision__get_thresholds
+    node_vipsa_analysis_Vision__get_contours("get_contours")
+    node_vipsa_analysis_Vision --> node_vipsa_analysis_Vision__get_contours
+    node_vipsa_analysis_Vision__get_contour_distances("get_contour_distances")
+    node_vipsa_analysis_Vision --> node_vipsa_analysis_Vision__get_contour_distances
+    node_vipsa_analysis_Vision__get_contour_distances_old("get_contour_distances_old")
+    node_vipsa_analysis_Vision --> node_vipsa_analysis_Vision__get_contour_distances_old
+    node_vipsa_analysis_Vision__detect_movement_with_crop("detect_movement_with_crop")
+    node_vipsa_analysis_Vision --> node_vipsa_analysis_Vision__detect_movement_with_crop
+    end
+    subgraph node_vipsa_gui_ProtocolEditor_tk_group[vipsa.gui.ProtocolEditor_tk]
+    node_vipsa_gui_ProtocolEditor_tk["vipsa.gui.ProtocolEditor_tk"]
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog(["ProtocolStepEditorDialog"])
+    node_vipsa_gui_ProtocolEditor_tk --> node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog___init__("__init__")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog --> node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog___init__
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__build_ui("_build_ui")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog --> node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__build_ui
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__browse_file("_browse_file")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog --> node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__browse_file
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__clear_fields("_clear_fields")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog --> node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__clear_fields
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__rebuild_fields("_rebuild_fields")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog --> node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__rebuild_fields
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__extract_params("_extract_params")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog --> node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__extract_params
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__validate("_validate")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog --> node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__validate
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__save("_save")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog --> node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__save
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__cancel("_cancel")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog --> node_vipsa_gui_ProtocolEditor_tk__ProtocolStepEditorDialog__cancel
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk(["ProtocolBuilderTk"])
+    node_vipsa_gui_ProtocolEditor_tk --> node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk___init__("__init__")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk --> node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk___init__
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk_show_step_editor("show_step_editor")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk --> node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk_show_step_editor
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk_get_protocol_display_list("get_protocol_display_list")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk --> node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk_get_protocol_display_list
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk_export_protocol("export_protocol")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk --> node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk_export_protocol
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk_import_protocol("import_protocol")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk --> node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk_import_protocol
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk_clear_protocol("clear_protocol")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk --> node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk_clear_protocol
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk_remove_step("remove_step")
+    node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk --> node_vipsa_gui_ProtocolEditor_tk__ProtocolBuilderTk_remove_step
+    end
+    subgraph node_vipsa_gui_Viewfinder4_tk_group[vipsa.gui.Viewfinder4_tk]
+    node_vipsa_gui_Viewfinder4_tk["vipsa.gui.Viewfinder4_tk"]
+    node_vipsa_gui_Viewfinder4_tk__RedirectText(["RedirectText"])
+    node_vipsa_gui_Viewfinder4_tk --> node_vipsa_gui_Viewfinder4_tk__RedirectText
+    node_vipsa_gui_Viewfinder4_tk__RedirectText___init__("__init__")
+    node_vipsa_gui_Viewfinder4_tk__RedirectText --> node_vipsa_gui_Viewfinder4_tk__RedirectText___init__
+    node_vipsa_gui_Viewfinder4_tk__RedirectText_write("write")
+    node_vipsa_gui_Viewfinder4_tk__RedirectText --> node_vipsa_gui_Viewfinder4_tk__RedirectText_write
+    node_vipsa_gui_Viewfinder4_tk__RedirectText_flush("flush")
+    node_vipsa_gui_Viewfinder4_tk__RedirectText --> node_vipsa_gui_Viewfinder4_tk__RedirectText_flush
+    node_vipsa_gui_Viewfinder4_tk__ScrollableFrame(["ScrollableFrame"])
+    node_vipsa_gui_Viewfinder4_tk --> node_vipsa_gui_Viewfinder4_tk__ScrollableFrame
+    node_vipsa_gui_Viewfinder4_tk__ScrollableFrame___init__("__init__")
+    node_vipsa_gui_Viewfinder4_tk__ScrollableFrame --> node_vipsa_gui_Viewfinder4_tk__ScrollableFrame___init__
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI(["VipsaGUI"])
+    node_vipsa_gui_Viewfinder4_tk --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI___init__("__init__")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI___init__
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__configure_theme("_configure_theme")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__configure_theme
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__register_string("_register_string")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__register_string
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__register_bool("_register_bool")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__register_bool
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_value("_get_value")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_value
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__set_value("_set_value")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__set_value
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__collect_values("_collect_values")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__collect_values
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__append_log("_append_log")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__append_log
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__log("_log")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__log
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__set_status("_set_status")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__set_status
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__is_abort_requested("_is_abort_requested")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__is_abort_requested
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__parse_closed_channels("_parse_closed_channels")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__parse_closed_channels
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_switch_channels("_get_switch_channels")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_switch_channels
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__identify_route("_identify_route")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__identify_route
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__safe_stop_hardware("_safe_stop_hardware")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__safe_stop_hardware
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__restore_active_manual_route("_restore_active_manual_route")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__restore_active_manual_route
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__restore_arduino_stage_after_abort("_restore_arduino_stage_after_abort")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__restore_arduino_stage_after_abort
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__normalize_smu_label("_normalize_smu_label")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__normalize_smu_label
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__discover_visa_instruments("_discover_visa_instruments")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__discover_visa_instruments
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__build_smu("_build_smu")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__build_smu
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__disconnect_smu_object("_disconnect_smu_object")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__disconnect_smu_object
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__set_manual_active_smu("_set_manual_active_smu")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__set_manual_active_smu
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__ensure_protocol_smus("_ensure_protocol_smus")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__ensure_protocol_smus
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__set_task_status("_set_task_status")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__set_task_status
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__run_in_background("_run_in_background")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__run_in_background
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__choose_file("_choose_file")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__choose_file
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__choose_directory("_choose_directory")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__choose_directory
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__add_entry_row("_add_entry_row")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__add_entry_row
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__add_checkbox("_add_checkbox")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__add_checkbox
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__add_section("_add_section")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__add_section
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__default_runtime_settings("_default_runtime_settings")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__default_runtime_settings
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__merge_runtime_settings("_merge_runtime_settings")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__merge_runtime_settings
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__apply_runtime_settings_to_ui("_apply_runtime_settings_to_ui")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__apply_runtime_settings_to_ui
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__load_persisted_runtime_settings("_load_persisted_runtime_settings")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__load_persisted_runtime_settings
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__persist_runtime_settings("_persist_runtime_settings")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__persist_runtime_settings
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__restore_default_runtime_settings("_restore_default_runtime_settings")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__restore_default_runtime_settings
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_runtime_bool_setting("_get_runtime_bool_setting")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_runtime_bool_setting
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_runtime_float_setting("_get_runtime_float_setting")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_runtime_float_setting
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_runtime_int_setting("_get_runtime_int_setting")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_runtime_int_setting
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_runtime_contact_settings("_get_runtime_contact_settings")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_runtime_contact_settings
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_runtime_measurement_settings("_get_runtime_measurement_settings")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__get_runtime_measurement_settings
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__build_runtime_settings("_build_runtime_settings")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__build_runtime_settings
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_camera_block("_create_camera_block")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_camera_block
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__build_layout("_build_layout")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__build_layout
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_movement_tab("_create_movement_tab")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_movement_tab
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_settings_tab("_create_settings_tab")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_settings_tab
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_grid_tab("_create_grid_tab")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_grid_tab
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_measure_tab("_create_measure_tab")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_measure_tab
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_protocol_tab("_create_protocol_tab")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_protocol_tab
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_log_panel("_create_log_panel")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_log_panel
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_monitor_panel("_create_monitor_panel")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_monitor_panel
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_live_plot_panel("_create_live_plot_panel")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_live_plot_panel
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__schedule_monitor_refresh("_schedule_monitor_refresh")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__schedule_monitor_refresh
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI_on_close("on_close")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI_on_close
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__request_abort("_request_abort")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__request_abort
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__refresh_setup_monitor("_refresh_setup_monitor")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__refresh_setup_monitor
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__draw_setup_diagram("_draw_setup_diagram")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__draw_setup_diagram
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__reset_live_plot("_reset_live_plot")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__reset_live_plot
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__live_plot_callback("_live_plot_callback")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__live_plot_callback
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__require_connection("_require_connection")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__require_connection
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_measure_resistance("_queue_measure_resistance")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_measure_resistance
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_single_dciv("_queue_single_dciv")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_single_dciv
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_single_pulse("_queue_single_pulse")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_single_pulse
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_grid_measurement("_queue_grid_measurement")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_grid_measurement
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_run_protocol_single("_queue_run_protocol_single")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_run_protocol_single
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_quick_align("_queue_quick_align")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_quick_align
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_quick_approach("_queue_quick_approach")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__queue_quick_approach
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__set_zero("_set_zero")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__set_zero
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__go_zero("_go_zero")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__go_zero
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__start_camera_thread("_start_camera_thread")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__start_camera_thread
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__stop_camera_thread("_stop_camera_thread")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__stop_camera_thread
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__clear_camera_feeds("_clear_camera_feeds")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__clear_camera_feeds
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__camera_loop("_camera_loop")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__camera_loop
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__update_camera_feed("_update_camera_feed")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__update_camera_feed
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__connect_all("_connect_all")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__connect_all
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__disconnect_all("_disconnect_all")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__disconnect_all
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__switch_instrument("_switch_instrument")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__switch_instrument
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__handle_arduino_move("_handle_arduino_move")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__handle_arduino_move
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__handle_zaber_move("_handle_zaber_move")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__handle_zaber_move
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__control_lights("_control_lights")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__control_lights
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_grid_csv("_create_grid_csv")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__create_grid_csv
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__quick_align("_quick_align")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__quick_align
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__quick_approach("_quick_approach")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__quick_approach
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__run_measure_resistance("_run_measure_resistance")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__run_measure_resistance
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__run_single_dciv_meas("_run_single_dciv_meas")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__run_single_dciv_meas
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__run_single_pulse_meas("_run_single_pulse_meas")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__run_single_pulse_meas
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__iter_grid_devices("_iter_grid_devices")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__iter_grid_devices
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__run_grid_measurement("_run_grid_measurement")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__run_grid_measurement
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__selected_protocol_index("_selected_protocol_index")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__selected_protocol_index
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__show_protocol_context_menu("_show_protocol_context_menu")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__show_protocol_context_menu
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__refresh_protocol_display("_refresh_protocol_display")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__refresh_protocol_display
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__add_protocol_step("_add_protocol_step")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__add_protocol_step
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__edit_selected_protocol_step("_edit_selected_protocol_step")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__edit_selected_protocol_step
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__remove_protocol_step("_remove_protocol_step")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__remove_protocol_step
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__clear_protocol("_clear_protocol")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__clear_protocol
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__save_protocol("_save_protocol")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__save_protocol
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__load_protocol("_load_protocol")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__load_protocol
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI__run_protocol_single("_run_protocol_single")
+    node_vipsa_gui_Viewfinder4_tk__VipsaGUI --> node_vipsa_gui_Viewfinder4_tk__VipsaGUI__run_protocol_single
+    end
+    subgraph node_vipsa_hardware_Openflexture_group[vipsa.hardware.Openflexture]
+    node_vipsa_hardware_Openflexture["vipsa.hardware.Openflexture"]
+    node_vipsa_hardware_Openflexture__stage(["stage"])
+    node_vipsa_hardware_Openflexture --> node_vipsa_hardware_Openflexture__stage
+    node_vipsa_hardware_Openflexture__stage___init__("__init__")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage___init__
+    node_vipsa_hardware_Openflexture__stage_flush("flush")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_flush
+    node_vipsa_hardware_Openflexture__stage_is_busy("is_busy")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_is_busy
+    node_vipsa_hardware_Openflexture__stage_change_scale("change_scale")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_change_scale
+    node_vipsa_hardware_Openflexture__stage_set_zero("set_zero")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_set_zero
+    node_vipsa_hardware_Openflexture__stage_go_to_zero("go_to_zero")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_go_to_zero
+    node_vipsa_hardware_Openflexture__stage_get_current_position("get_current_position")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_get_current_position
+    node_vipsa_hardware_Openflexture__stage_move_x_by("move_x_by")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_move_x_by
+    node_vipsa_hardware_Openflexture__stage_move_y_by("move_y_by")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_move_y_by
+    node_vipsa_hardware_Openflexture__stage_move_xy_by("move_xy_by")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_move_xy_by
+    node_vipsa_hardware_Openflexture__stage_move_xy_to("move_xy_to")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_move_xy_to
+    node_vipsa_hardware_Openflexture__stage_move_with_lim_by("move_with_lim_by")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_move_with_lim_by
+    node_vipsa_hardware_Openflexture__stage_move_z_by("move_z_by")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_move_z_by
+    node_vipsa_hardware_Openflexture__stage_move_z_infinite("move_z_infinite")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_move_z_infinite
+    node_vipsa_hardware_Openflexture__stage_abort_motion("abort_motion")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_abort_motion
+    node_vipsa_hardware_Openflexture__stage_reconnect("reconnect")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_reconnect
+    node_vipsa_hardware_Openflexture__stage_speak_grbl("speak_grbl")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_speak_grbl
+    node_vipsa_hardware_Openflexture__stage_disconnect("disconnect")
+    node_vipsa_hardware_Openflexture__stage --> node_vipsa_hardware_Openflexture__stage_disconnect
+    node_vipsa_hardware_Openflexture__Light(["Light"])
+    node_vipsa_hardware_Openflexture --> node_vipsa_hardware_Openflexture__Light
+    node_vipsa_hardware_Openflexture__Light___init__("__init__")
+    node_vipsa_hardware_Openflexture__Light --> node_vipsa_hardware_Openflexture__Light___init__
+    node_vipsa_hardware_Openflexture__Light_control_lights("control_lights")
+    node_vipsa_hardware_Openflexture__Light --> node_vipsa_hardware_Openflexture__Light_control_lights
+    node_vipsa_hardware_Openflexture__Light_disconnect("disconnect")
+    node_vipsa_hardware_Openflexture__Light --> node_vipsa_hardware_Openflexture__Light_disconnect
+    node_vipsa_hardware_Openflexture__Zaber(["Zaber"])
+    node_vipsa_hardware_Openflexture --> node_vipsa_hardware_Openflexture__Zaber
+    node_vipsa_hardware_Openflexture__Zaber___init__("__init__")
+    node_vipsa_hardware_Openflexture__Zaber --> node_vipsa_hardware_Openflexture__Zaber___init__
+    node_vipsa_hardware_Openflexture__Zaber_get_devices("get_devices")
+    node_vipsa_hardware_Openflexture__Zaber --> node_vipsa_hardware_Openflexture__Zaber_get_devices
+    node_vipsa_hardware_Openflexture__Zaber_disconnect("disconnect")
+    node_vipsa_hardware_Openflexture__Zaber --> node_vipsa_hardware_Openflexture__Zaber_disconnect
+    end
+    subgraph node_vipsa_hardware_Source_Measure_Unit_group[vipsa.hardware.Source_Measure_Unit]
+    node_vipsa_hardware_Source_Measure_Unit["vipsa.hardware.Source_Measure_Unit"]
+    node_vipsa_hardware_Source_Measure_Unit___warn_once("_warn_once")
+    node_vipsa_hardware_Source_Measure_Unit --> node_vipsa_hardware_Source_Measure_Unit___warn_once
+    node_vipsa_hardware_Source_Measure_Unit___measurement_record("_measurement_record")
+    node_vipsa_hardware_Source_Measure_Unit --> node_vipsa_hardware_Source_Measure_Unit___measurement_record
+    node_vipsa_hardware_Source_Measure_Unit___records_to_frame("_records_to_frame")
+    node_vipsa_hardware_Source_Measure_Unit --> node_vipsa_hardware_Source_Measure_Unit___records_to_frame
+    node_vipsa_hardware_Source_Measure_Unit___parse_keysight_trace("_parse_keysight_trace")
+    node_vipsa_hardware_Source_Measure_Unit --> node_vipsa_hardware_Source_Measure_Unit___parse_keysight_trace
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU(["KeysightSMU"])
+    node_vipsa_hardware_Source_Measure_Unit --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU___init__("__init__")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU___init__
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU__open_resource("_open_resource")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU__open_resource
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_connect_switch_path("connect_switch_path")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_connect_switch_path
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_disconnect_switch_path("disconnect_switch_path")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_disconnect_switch_path
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_close_session("close_session")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_close_session
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_get_address("get_address")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_get_address
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_get_error("get_error")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_get_error
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_reset_device("reset_device")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_reset_device
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_sync("sync")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_sync
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_send_command("send_command")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_send_command
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_write("write")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_write
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_ask("ask")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_ask
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_prepare_contact_probe("prepare_contact_probe")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_prepare_contact_probe
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_stop_output("stop_output")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_stop_output
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_abort_measurement("abort_measurement")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_abort_measurement
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_get_contact_current("get_contact_current")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_get_contact_current
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_get_contact_current_fast("get_contact_current_fast")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_get_contact_current_fast
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_split_list("split_list")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_split_list
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_split_list_by_4("split_list_by_4")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_split_list_by_4
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_simple_IV_sweep("simple_IV_sweep")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_simple_IV_sweep
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_list_IV_sweep_manual("list_IV_sweep_manual")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_list_IV_sweep_manual
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_scan_read_vlist("scan_read_vlist")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_scan_read_vlist
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_list_IV_sweep_split("list_IV_sweep_split")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_list_IV_sweep_split
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_list_IV_sweep_split_4("list_IV_sweep_split_4")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_list_IV_sweep_split_4
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_pulsed_measurement("pulsed_measurement")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_pulsed_measurement
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_response_dealer("response_dealer")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_response_dealer
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_split_pulse_for_2_chan("split_pulse_for_2_chan")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_split_pulse_for_2_chan
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_general_channel_pulsing("general_channel_pulsing")
+    node_vipsa_hardware_Source_Measure_Unit__KeysightSMU --> node_vipsa_hardware_Source_Measure_Unit__KeysightSMU_general_channel_pulsing
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU(["KeithleySMU"])
+    node_vipsa_hardware_Source_Measure_Unit --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU___init__("__init__")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU___init__
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_connect_switch_path("connect_switch_path")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_connect_switch_path
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_disconnect_switch_path("disconnect_switch_path")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_disconnect_switch_path
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_close_session("close_session")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_close_session
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_get_address("get_address")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_get_address
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_reset_device("reset_device")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_reset_device
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_write("write")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_write
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_ask("ask")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_ask
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_prepare_contact_probe("prepare_contact_probe")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_prepare_contact_probe
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_stop_output("stop_output")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_stop_output
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_abort_measurement("abort_measurement")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_abort_measurement
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_get_contact_current("get_contact_current")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_get_contact_current
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_get_contact_current_fast("get_contact_current_fast")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_get_contact_current_fast
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_run_read_probe("run_read_probe")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_run_read_probe
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_identify_linear_segments("identify_linear_segments")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_identify_linear_segments
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_split_by_polarity("split_by_polarity")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_split_by_polarity
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_split_sweep_by_4("split_sweep_by_4")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_split_sweep_by_4
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_list_IV_sweep_split_4("list_IV_sweep_split_4")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_list_IV_sweep_split_4
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_run_linear_segment("run_linear_segment")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_run_linear_segment
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_list_IV_sweep_split("list_IV_sweep_split")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_list_IV_sweep_split
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_pulsed_measurement("pulsed_measurement")
+    node_vipsa_hardware_Source_Measure_Unit__KeithleySMU --> node_vipsa_hardware_Source_Measure_Unit__KeithleySMU_pulsed_measurement
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B(["Keithley707B"])
+    node_vipsa_hardware_Source_Measure_Unit --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B___init__("__init__")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B___init__
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B__open_device("_open_device")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B__open_device
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B_build_channel("build_channel")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B_build_channel
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B__normalize_channel("_normalize_channel")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B__normalize_channel
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B__format_channels("_format_channels")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B__format_channels
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B_write_tsp("write_tsp")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B_write_tsp
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B_query_tsp("query_tsp")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B_query_tsp
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B_close_channel("close_channel")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B_close_channel
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B_open_channel("open_channel")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B_open_channel
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B_open_all("open_all")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B_open_all
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B_get_closed_channels("get_closed_channels")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B_get_closed_channels
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B_get_route_channels("get_route_channels")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B_get_route_channels
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B_connect_named_route("connect_named_route")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B_connect_named_route
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B_connect_keithley_smu("connect_keithley_smu")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B_connect_keithley_smu
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B_connect_keysight_smu("connect_keysight_smu")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B_connect_keysight_smu
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B_reset("reset")
+    node_vipsa_hardware_Source_Measure_Unit__Keithley707B --> node_vipsa_hardware_Source_Measure_Unit__Keithley707B_reset
+    end
+    subgraph node_vipsa_workflows_Main4_group[vipsa.workflows.Main4]
+    node_vipsa_workflows_Main4["vipsa.workflows.Main4"]
+    node_vipsa_workflows_Main4__Vipsa_Methods(["Vipsa_Methods"])
+    node_vipsa_workflows_Main4 --> node_vipsa_workflows_Main4__Vipsa_Methods
+    node_vipsa_workflows_Main4__Vipsa_Methods__supports_kwarg("_supports_kwarg")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods__supports_kwarg
+    node_vipsa_workflows_Main4__Vipsa_Methods__call_with_supported_kwargs("_call_with_supported_kwargs")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods__call_with_supported_kwargs
+    node_vipsa_workflows_Main4__Vipsa_Methods__describe_smu("_describe_smu")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods__describe_smu
+    node_vipsa_workflows_Main4__Vipsa_Methods__build_measurement_metadata("_build_measurement_metadata")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods__build_measurement_metadata
+    node_vipsa_workflows_Main4__Vipsa_Methods__build_protocol_context("_build_protocol_context")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods__build_protocol_context
+    node_vipsa_workflows_Main4__Vipsa_Methods__runtime_setting("_runtime_setting")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods__runtime_setting
+    node_vipsa_workflows_Main4__Vipsa_Methods_connect_equipment("connect_equipment")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_connect_equipment
+    node_vipsa_workflows_Main4__Vipsa_Methods_disconnect_equipment("disconnect_equipment")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_disconnect_equipment
+    node_vipsa_workflows_Main4__Vipsa_Methods__abort_requested("_abort_requested")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods__abort_requested
+    node_vipsa_workflows_Main4__Vipsa_Methods_detect_contact_and_move_z("detect_contact_and_move_z")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_detect_contact_and_move_z
+    node_vipsa_workflows_Main4__Vipsa_Methods_center_pad("center_pad")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_center_pad
+    node_vipsa_workflows_Main4__Vipsa_Methods_center_pad_zaber("center_pad_zaber")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_center_pad_zaber
+    node_vipsa_workflows_Main4__Vipsa_Methods_correct_course("correct_course")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_correct_course
+    node_vipsa_workflows_Main4__Vipsa_Methods_quick_run_pulse("quick_run_pulse")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_quick_run_pulse
+    node_vipsa_workflows_Main4__Vipsa_Methods_optimize_pulse_train("optimize_pulse_train")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_optimize_pulse_train
+    node_vipsa_workflows_Main4__Vipsa_Methods_extrapolate_z_positions("extrapolate_z_positions")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_extrapolate_z_positions
+    node_vipsa_workflows_Main4__Vipsa_Methods_get_grid_z_positions("get_grid_z_positions")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_get_grid_z_positions
+    node_vipsa_workflows_Main4__Vipsa_Methods_run_single_DCIV("run_single_DCIV")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_run_single_DCIV
+    node_vipsa_workflows_Main4__Vipsa_Methods_run_resistance_measurement("run_resistance_measurement")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_run_resistance_measurement
+    node_vipsa_workflows_Main4__Vipsa_Methods_run_single_pulse("run_single_pulse")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_run_single_pulse
+    node_vipsa_workflows_Main4__Vipsa_Methods_measure_IV_gridwise("measure_IV_gridwise")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_measure_IV_gridwise
+    node_vipsa_workflows_Main4__Vipsa_Methods_adaptive_testing("adaptive_testing")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_adaptive_testing
+    node_vipsa_workflows_Main4__Vipsa_Methods_best_5_endurance("best_5_endurance")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_best_5_endurance
+    node_vipsa_workflows_Main4__Vipsa_Methods_save_protocol("save_protocol")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_save_protocol
+    node_vipsa_workflows_Main4__Vipsa_Methods_load_protocol("load_protocol")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_load_protocol
+    node_vipsa_workflows_Main4__Vipsa_Methods_validate_protocol("validate_protocol")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_validate_protocol
+    node_vipsa_workflows_Main4__Vipsa_Methods__execute_protocol_step("_execute_protocol_step")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods__execute_protocol_step
+    node_vipsa_workflows_Main4__Vipsa_Methods_run_protocol("run_protocol")
+    node_vipsa_workflows_Main4__Vipsa_Methods --> node_vipsa_workflows_Main4__Vipsa_Methods_run_protocol
+    end
+    node_vipsa_gui_Viewfinder4_tk -.-> node_vipsa_analysis_Vision
+    node_vipsa_gui_Viewfinder4_tk -.-> node_vipsa_gui_ProtocolEditor_tk
+    node_vipsa_gui_Viewfinder4_tk -.-> node_vipsa_hardware_Openflexture
+    node_vipsa_gui_Viewfinder4_tk -.-> node_vipsa_hardware_Source_Measure_Unit
+    node_vipsa_gui_Viewfinder4_tk -.-> node_vipsa_workflows_Main4
+    node_vipsa_workflows_Main4 -.-> node_vipsa_analysis
+    node_vipsa_workflows_Main4 -.-> node_vipsa_analysis_Vision
+    node_vipsa_workflows_Main4 -.-> node_vipsa_hardware_Openflexture
+    node_vipsa_workflows_Main4 -.-> node_vipsa_hardware_Source_Measure_Unit
+    style node_vipsa_gui_Viewfinder4_tk fill:#f5c095,stroke:#333,stroke-width:2px

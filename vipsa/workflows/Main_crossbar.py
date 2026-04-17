@@ -4,6 +4,9 @@ It contains the methods for connecting to the crossbar, switching channels, and 
 
 """
 
+import inspect
+from datetime import datetime
+
 from vipsa.hardware.Multiplexing import Multiplexer
 from vipsa.hardware.Source_Measure_Unit import KeysightSMU
 from vipsa.analysis import Datahandling as dh #
@@ -28,6 +31,40 @@ class Crossbar_Methods():
         self.list_maker = dh.Listmaker() # Instantiate Listmaker
         self.is_smu_connected = False
         self.is_mux_connected = False
+
+    @staticmethod
+    def _supports_kwarg(callable_obj, kwarg_name):
+        try:
+            return kwarg_name in inspect.signature(callable_obj).parameters
+        except (TypeError, ValueError):
+            return False
+
+    def _call_with_supported_kwargs(self, callable_obj, *args, **kwargs):
+        supported_kwargs = {
+            key: value
+            for key, value in kwargs.items()
+            if self._supports_kwarg(callable_obj, key)
+        }
+        return callable_obj(*args, **supported_kwargs)
+
+    def _build_measurement_metadata(self, data_name, device_id, measurement_params):
+        smu_address = None
+        if self.smu is not None and hasattr(self.smu, "get_address"):
+            try:
+                smu_address = self.smu.get_address()
+            except Exception:
+                smu_address = None
+        return {
+            "saved_at": datetime.now().isoformat(),
+            "data_name": data_name,
+            "sample_id": "crossbar",
+            "device_id": device_id,
+            "smu": {
+                "class": type(self.smu).__name__ if self.smu is not None else None,
+                "address": smu_address,
+            },
+            "measurement_parameters": measurement_params,
+        }
 
 # =============================================================================#
 #                               Basic Methods                                  #
@@ -215,7 +252,9 @@ class Crossbar_Methods():
 # =============================================================================#
 
     def run_single_DCIV(self, ch1, ch2, pos_compl, neg_compl, sweep_path,
-                        sweep_delay=None, acq_delay =None, plot=True, save=True, save_dir=None):
+                        sweep_delay=None, acq_delay =None, plot=True, save=True, save_dir=None,
+                        use_4way_split=True, current_autorange=False, include_read_probe=True,
+                        read_probe_mode="between_segments", progress_callback=None):
         """Runs a single DCIV sweep measurement on the specified channels."""
         if not self.smu or not self.is_smu_connected:
             print("Error: SMU not connected.")
@@ -236,16 +275,39 @@ class Crossbar_Methods():
 
         smu_address = self.smu.get_address() #
         try:
-            # Use list_IV_sweep_split from Source_Measure_Unit.py
-            # It returns both sweep data and resistance data (from tiny_IV)
-            sweep_data = self.smu.list_IV_sweep_split(
-                csv_path=sweep_path,
-                pos_compliance=pos_compl,
-                neg_compliance=neg_compl,
-                delay=sweep_delay,
-                acq_delay=acq_delay,
-                adr=smu_address
-            ) #
+            resistance_data = None
+            if use_4way_split and hasattr(self.smu, "list_IV_sweep_split_4"):
+                sweep_data, resistance_data = self._call_with_supported_kwargs(
+                    self.smu.list_IV_sweep_split_4,
+                    sweep_path,
+                    pos_compliance=pos_compl,
+                    neg_compliance=neg_compl,
+                    delay=sweep_delay,
+                    acq_delay=acq_delay,
+                    adr=smu_address,
+                    include_read_probe=include_read_probe,
+                    read_probe_mode=read_probe_mode,
+                    current_autorange=current_autorange,
+                    progress_callback=progress_callback,
+                )
+            else:
+                sweep_result = self._call_with_supported_kwargs(
+                    self.smu.list_IV_sweep_split,
+                    sweep_path,
+                    pos_compl,
+                    neg_compl,
+                    delay=sweep_delay,
+                    acq_delay=acq_delay,
+                    adr=smu_address,
+                    include_read_probe=include_read_probe,
+                    read_probe_mode=read_probe_mode,
+                    current_autorange=current_autorange,
+                    progress_callback=progress_callback,
+                )
+                if isinstance(sweep_result, tuple) and len(sweep_result) >= 2:
+                    sweep_data, resistance_data = sweep_result[0], sweep_result[1]
+                else:
+                    sweep_data = sweep_result
 
             if sweep_data is not None and len(sweep_data) > 0:
                 print("DCIV measurement successful.")
@@ -253,11 +315,43 @@ class Crossbar_Methods():
                     if save_dir is None:
                         save_dir = DEFAULT_SAVE_DIRECTORY
                     device_id = f"{ch1}-{ch2}" # Create a unique ID
+                    sweep_metadata = self._build_measurement_metadata(
+                        "Sweep",
+                        device_id,
+                        {
+                            "sweep_path": sweep_path,
+                            "pos_compliance_a": pos_compl,
+                            "neg_compliance_a": neg_compl,
+                            "sweep_delay_s": sweep_delay,
+                            "acquire_delay_s": acq_delay,
+                            "use_4way_split": use_4way_split,
+                            "include_read_probe": include_read_probe,
+                            "read_probe_mode": read_probe_mode,
+                            "current_autorange": current_autorange,
+                            "mux_channels": {"ch1": ch1, "ch2": ch2},
+                        },
+                    )
                     # Contact current and Z_pos are not relevant here, save placeholder or 0
-                    saved_file_sweep = self.data_handler.save_file(sweep_data, "Sweep", "crossbar", device_id, 0, 0, save_directory=save_dir) #
-                    # Save resistance data as well
-                    #saved_file_resistance = self.data_handler.save_file(resistance_data, "Resistance", "crossbar", device_id, 0, 0, save_directory=save_dir) #
-                    saved_file_resistance=None
+                    saved_file_sweep = self.data_handler.save_file(
+                        sweep_data, "Sweep", "crossbar", device_id, 0, 0,
+                        save_directory=save_dir, metadata=sweep_metadata
+                    ) #
+                    saved_file_resistance = None
+                    if resistance_data is not None and len(resistance_data) > 0:
+                        resistance_metadata = self._build_measurement_metadata(
+                            "Resistance",
+                            device_id,
+                            {
+                                "linked_sweep_path": sweep_path,
+                                "include_read_probe": include_read_probe,
+                                "read_probe_mode": read_probe_mode,
+                                "mux_channels": {"ch1": ch1, "ch2": ch2},
+                            },
+                        )
+                        saved_file_resistance = self.data_handler.save_file(
+                            resistance_data, "Resistance", "crossbar", device_id, 0, 0,
+                            save_directory=save_dir, metadata=resistance_metadata
+                        )
                     
                     if plot and saved_file_sweep:
                          # Use methods from Datahandling.py
@@ -265,14 +359,14 @@ class Crossbar_Methods():
                         if saved_file_resistance:
                              self.data_handler.show_resistance(saved_file_resistance, "crossbar", device_id) #
 
-                return sweep_data, #resistance_data # Return both datasets
+                return sweep_data, resistance_data, saved_file_sweep
             else:
                 print("DCIV measurement failed or returned no data.")
-                return None, None
+                return None, None, None
 
         except Exception as e:
             print(f"Error during DCIV measurement: {e}")
-            return None, None
+            return None, None, None
         finally:
              # It's good practice to turn off output after measurement, though list_IV_sweep_split might handle this internally
              # self.smu.send_command(':OUTP1 OFF') # Turn off channel 1
@@ -281,7 +375,8 @@ class Crossbar_Methods():
 
 
     def run_single_pulse(self, ch1, ch2, compliance, pulse_path,
-                         pulse_width=None, plot=True, save=True, save_dir=None):
+                         pulse_width=None, plot=True, save=True, save_dir=None,
+                         set_acquire_delay=None, current_autorange=False):
         """Runs a single pulsed measurement on the specified channels."""
         if not self.smu or not self.is_smu_connected:
             print("Error: SMU not connected.")
@@ -307,7 +402,9 @@ class Crossbar_Methods():
                 csv_path=pulse_path,
                 current_compliance=compliance,
                 set_width=pulse_width, # Pass pulse_width if provided
-                adr=smu_address
+                set_acquire_delay=set_acquire_delay,
+                adr=smu_address,
+                current_autorange=current_autorange,
             ) #
 
             if pulse_data is not None and len(pulse_data) > 0:
@@ -316,21 +413,36 @@ class Crossbar_Methods():
                     if save_dir is None:
                         save_dir = DEFAULT_SAVE_DIRECTORY
                     device_id = f"{ch1}-{ch2}" # Create unique ID
+                    pulse_metadata = self._build_measurement_metadata(
+                        "Pulse",
+                        device_id,
+                        {
+                            "pulse_path": pulse_path,
+                            "compliance_a": compliance,
+                            "pulse_width_s": pulse_width,
+                            "set_acquire_delay_s": set_acquire_delay,
+                            "current_autorange": current_autorange,
+                            "mux_channels": {"ch1": ch1, "ch2": ch2},
+                        },
+                    )
                     # Contact current and Z_pos are not relevant here, save placeholder or 0
-                    saved_file_pulse = self.data_handler.save_file(pulse_data, "Pulse", "crossbar", device_id, 0, 0, save_directory=save_dir) #
+                    saved_file_pulse = self.data_handler.save_file(
+                        pulse_data, "Pulse", "crossbar", device_id, 0, 0,
+                        save_directory=save_dir, metadata=pulse_metadata
+                    ) #
 
                     if plot and saved_file_pulse:
                          # Use method from Datahandling.py
                          self.data_handler.show_pulse(saved_file_pulse, "crossbar", device_id) #
 
-                return pulse_data
+                return pulse_data, saved_file_pulse
             else:
                 print("Pulsed measurement failed or returned no data.")
-                return None
+                return None, None
 
         except Exception as e:
             print(f"Error during pulsed measurement: {e}")
-            return None
+            return None, None
         finally:
              # Turn off output after measurement
              # self.smu.send_command(':OUTP1 OFF') # Turn off channel 1

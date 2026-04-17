@@ -15,6 +15,8 @@ STEP_TEMPLATES = {
             "approach": False,
             "smu_select": "Keithley2450",
             "use_4way_split": True,
+            "include_read_probe": True,
+            "read_probe_mode": "between_segments",
         },
     },
     "PULSE": {
@@ -25,7 +27,7 @@ STEP_TEMPLATES = {
             "pulse_width": 0.001,
             "align": False,
             "approach": False,
-            "smu_select": "Keithley2450",
+            "smu_select": "KeysightB2901BL",
             "set_acquire_delay": 0.0005,
         },
     },
@@ -258,9 +260,13 @@ class ProtocolBuilderTk:
             parts = [f"{index}. {step_type}"]
             if step_type in {"DCIV", "RESISTANCE"}:
                 parts.append(f"[Pos Compl: {params.get('pos_compl')}]")
+                parts.append(f"[SMU: {params.get('smu_select', 'Keithley2450')}]")
+                if step_type == "DCIV" and not params.get("include_read_probe", True):
+                    parts.append("[Read Probe: Off]")
             elif step_type == "PULSE":
                 parts.append(f"[Compliance: {params.get('compliance')}]")
                 parts.append(f"[Width: {params.get('pulse_width')}]")
+                parts.append(f"[SMU: {params.get('smu_select', 'KeysightB2901BL')}]")
             elif step_type == "APPROACH":
                 parts.append(f"[Threshold: {params.get('lower_threshold')}..{params.get('upper_threshold')}]")
             elif step_type == "DELAY":

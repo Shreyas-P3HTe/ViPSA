@@ -7,6 +7,7 @@ Created on Thu Jan  9 14:12:13 2025
 """
 
 import os
+import inspect
 import numpy as np
 import pandas as pd
 import time
@@ -15,12 +16,102 @@ from matplotlib import pyplot as plt
 from scipy.optimize import minimize
 from datetime import datetime
 
-from vipsa.hardware.Source_Measure_Unit import KeysightSMU, pyvisa, KeithleySMU
-from vipsa.hardware.Openflexture import Light, stage, Zaber
-from vipsa.analysis.Vision import get_contours, get_contour_distances, capture_image
-from vipsa.analysis import Datahandling as dh
+try:
+    from vipsa.hardware.Source_Measure_Unit import KeysightSMU, pyvisa, KeithleySMU
+    from vipsa.hardware.Movement import Light, stage, Zaber
+    from vipsa.analysis.Vision import (
+        get_contours,
+        get_contour_distances,
+        capture_image,
+    )
+    from vipsa.analysis import Datahandling as dh
+except ModuleNotFoundError:
+    from Source_Measure_Unit import KeysightSMU, pyvisa, KeithleySMU
+    from Openflexture import Light, stage, Zaber
+    from Vision import get_contours, get_contour_distances, capture_image
+    import Datahandling as dh
 
 class Vipsa_Methods():
+
+    @staticmethod
+    def _supports_kwarg(callable_obj, kwarg_name):
+        try:
+            return kwarg_name in inspect.signature(callable_obj).parameters
+        except (TypeError, ValueError):
+            return False
+
+    def _call_with_supported_kwargs(self, callable_obj, *args, **kwargs):
+        supported_kwargs = {
+            key: value
+            for key, value in kwargs.items()
+            if self._supports_kwarg(callable_obj, key)
+        }
+        return callable_obj(*args, **supported_kwargs)
+
+    @staticmethod
+    def _describe_smu(SMU):
+        if SMU is None:
+            return {"class": None, "address": None}
+        address = None
+        if hasattr(SMU, "get_address"):
+            try:
+                address = SMU.get_address()
+            except Exception:
+                address = None
+        return {
+            "class": type(SMU).__name__,
+            "address": address,
+        }
+
+    def _build_measurement_metadata(
+        self,
+        data_name,
+        sample_no,
+        device_no,
+        step_no,
+        SMU,
+        measurement_params,
+        protocol_context=None,
+    ):
+        metadata = {
+            "saved_at": datetime.now().isoformat(),
+            "data_name": data_name,
+            "sample_id": sample_no,
+            "device_id": device_no,
+            "step_no": step_no,
+            "smu": self._describe_smu(SMU),
+            "measurement_parameters": measurement_params,
+        }
+        if protocol_context is not None:
+            metadata["protocol_context"] = protocol_context
+        return metadata
+
+    @staticmethod
+    def _build_protocol_context(protocol_list_configs, step_index, current_step):
+        return {
+            "step_index": int(step_index) + 1,
+            "step_index_zero_based": int(step_index),
+            "total_steps": len(protocol_list_configs),
+            "current_step_type": current_step.get("type"),
+            "current_step_params": current_step.get("params", {}),
+            "steps": [
+                {
+                    "step_index": idx + 1,
+                    "type": step.get("type"),
+                    "params": step.get("params", {}),
+                }
+                for idx, step in enumerate(protocol_list_configs)
+            ],
+        }
+
+    @staticmethod
+    def _runtime_setting(runtime_settings, group, key, fallback):
+        if not isinstance(runtime_settings, dict):
+            return fallback
+        values = runtime_settings.get(group, {})
+        if not isinstance(values, dict):
+            return fallback
+        return values.get(key, fallback)
     
     def connect_equipment(self, SMU_name):
         
@@ -94,11 +185,19 @@ class Vipsa_Methods():
 #                               Basic Methods                                  #
 # =============================================================================#
 
+    def _abort_requested(self, abort_requested=None):
+        if abort_requested is None:
+            return False
+        try:
+            return bool(abort_requested())
+        except Exception:
+            return False
+
     
     def detect_contact_and_move_z(self, SMU=None, stage=None, 
                                   step_size=1, test_voltage=0.1, 
                                   lower_threshold=1e-9, upper_threshold=5e-8,
-                                  max_attempts=50, delay=0.05):
+                                  max_attempts=50, delay=0.05, abort_requested=None):
         '''
         Moves the arduino stage 1 step at a time and checks if the current is 
         between the lower and upper threshold. Stops when the current is withtin the desired range
@@ -128,18 +227,28 @@ class Vipsa_Methods():
         contact_detected = False
     
         try:
-            # configure once before the loop, not every time
-            self.SMU.write("*RST")
-            self.SMU.write(":SOUR:FUNC VOLT")
-            self.SMU.write(":SENS:FUNC 'CURR'")
-            self.SMU.write(f":SOUR:VOLT:LEV {test_voltage}")
-            if self.SMU_name == "Keithley2450":
-                self.SMU.write(":ROUT:TERM REAR")
-                print("Active terminals:", (self.SMU.ask(":ROUT:TERM?")).strip())
-            self.SMU.write(f":SENS:CURR:PROT {10*upper_threshold}")
-            self.SMU.write(":OUTP ON")
+            if self._abort_requested(abort_requested):
+                print("Abort requested before quick approach started.")
+                return False, 0.0, stage.get_current_position()[2]
+
+            prepare_contact_probe = getattr(SMU, "prepare_contact_probe", None)
+            if callable(prepare_contact_probe):
+                prepare_contact_probe(test_voltage, 10 * upper_threshold)
+            else:
+                SMU.write("*RST")
+                SMU.write(":SOUR:FUNC VOLT")
+                SMU.write(":SENS:FUNC 'CURR'")
+                SMU.write(f":SOUR:VOLT:LEV {test_voltage}")
+                if isinstance(SMU, KeithleySMU):
+                    SMU.write(":ROUT:TERM REAR")
+                    print("Active terminals:", (SMU.ask(":ROUT:TERM?")).strip())
+                SMU.write(f":SENS:CURR:PROT {10*upper_threshold}")
+                SMU.write(":OUTP ON")
             # Try to probe, pray that you get it correct in the first go
             for attempt in range(max_attempts):
+                if self._abort_requested(abort_requested):
+                    print("Abort requested during quick approach.")
+                    return False, current, stage.get_current_position()[2]
                 current = SMU.get_contact_current_fast(test_voltage, settle=delay)
                 print(f"Attempt {attempt+1}: Current = {current:.3e} A")
     
@@ -157,6 +266,9 @@ class Vipsa_Methods():
                 # Oh golly heck, you went too far ! Now slowly retrace your steps
                 backstep = 0
                 while current > upper_threshold:
+                    if self._abort_requested(abort_requested):
+                        print("Abort requested while retracting after contact.")
+                        return False, current, stage.get_current_position()[2]
                     stage.move_z_by(-0.5 * step_size)
                     backstep += 1
                     time.sleep(delay)
@@ -173,6 +285,9 @@ class Vipsa_Methods():
                 # Too much. TOO MUCH ! UGH !
                 i = 0
                 while current < lower_threshold:
+                    if self._abort_requested(abort_requested):
+                        print("Abort requested during final approach tuning.")
+                        return False, current, stage.get_current_position()[2]
                     stage.move_z_by(0.25 * step_size)
                     current = SMU.get_contact_current_fast(test_voltage, settle=delay)
                     print(f"Final attempt {i}: Current = {current:.3e} A")
@@ -196,7 +311,11 @@ class Vipsa_Methods():
     
         finally:
             try:
-                self.SMU.write(":OUTP OFF")
+                stop_output = getattr(SMU, "stop_output", None)
+                if callable(stop_output):
+                    stop_output()
+                else:
+                    SMU.write(":OUTP OFF")
             except Exception:
                 pass
 
@@ -457,7 +576,8 @@ class Vipsa_Methods():
                         save_directory = None, sweep_path = None, wait_time = 0,
                         SMU = None, stage = None, Zaber_x = None, Zaber_y = None, top_light = None,
                         compliance_pf=None, compliance_pb=None, compliance_nf=None, compliance_nb=None,
-                        use_4way_split=True,):
+                        use_4way_split=True, include_read_probe=True, abort_requested=None, progress_callback=None,
+                        current_autorange=False, read_probe_mode="between_segments", protocol_context=None):
         """
         Runs a DCIV and saves the file.
         Replaces the old "measure_and_save" method, does exactly the same.
@@ -498,21 +618,34 @@ class Vipsa_Methods():
             
         Data_Handler = dh.Data_Handler() 
         SMU_adress = SMU.get_address()
+
+        if self._abort_requested(abort_requested):
+            print("Abort requested before DCIV measurement started.")
+            return False, stage.get_current_position()[2], None
         
         if align : #misaligned device
             self.correct_course(move = True, zaber_corr = zaber_corr, recheck = corr_recheck,
                                 Zaber_x = Zaber_x, Zaber_y = Zaber_y, stage = stage, top_light = top_light)
+
+        if self._abort_requested(abort_requested):
+            print("Abort requested after alignment and before DCIV approach.")
+            return False, stage.get_current_position()[2], None
             
         if approach : 
             contact, cont_current, height = self.detect_contact_and_move_z(SMU = SMU, stage = stage,
                                                                            step_size = step_size, test_voltage = test_voltage, 
                                                                            lower_threshold = lower_threshold, upper_threshold = upper_threshold, 
-                                                                           max_attempts = max_attempts , delay = delay )
+                                                                           max_attempts = max_attempts , delay = delay,
+                                                                           abort_requested=abort_requested)
             
         else :
             contact = True
             cont_current = SMU.get_contact_current(test_voltage,adr=SMU_adress)
             height = stage.get_current_position()[2]
+
+        if self._abort_requested(abort_requested):
+            print("Abort requested before DCIV sweep execution.")
+            return False, height, None
         
         if contact :
             
@@ -527,7 +660,8 @@ class Vipsa_Methods():
             if compliance_nb is None: compliance_nb = neg_compl
     
             if use_4way_split:
-                sweep_data, resistance_data = SMU.list_IV_sweep_split_4(
+                sweep_data, resistance_data = self._call_with_supported_kwargs(
+                    SMU.list_IV_sweep_split_4,
                     sweep_path,
                     compliance_pf=compliance_pf,
                     compliance_pb=compliance_pb,
@@ -536,29 +670,92 @@ class Vipsa_Methods():
                     delay=sweep_delay,
                     # you can pass nplc / wait_time too if your keithley method supports it
                     wait_time=wait_time,
+                    progress_callback=progress_callback,
+                    include_read_probe=include_read_probe,
+                    current_autorange=current_autorange,
+                    read_probe_mode=read_probe_mode,
                 )
             else:
                 # fallback to existing 2-way
-                sweep_data, resistance_data = SMU.list_IV_sweep_split(
+                sweep_data, resistance_data = self._call_with_supported_kwargs(
+                    SMU.list_IV_sweep_split,
                     sweep_path, pos_compl, neg_compl,
                     delay=sweep_delay, acq_delay=acq_delay, adr=SMU_adress,
-                    wait_time=wait_time
+                    wait_time=wait_time, progress_callback=progress_callback,
+                    include_read_probe=include_read_probe,
+                    current_autorange=current_autorange,
+                    read_probe_mode=read_probe_mode,
                 )
             
             print(f"wait time between measurements: {wait_time}s")
             #time.sleep(wait_time)
             
+            sweep_metadata = self._build_measurement_metadata(
+                data_name="Sweep",
+                sample_no=sample_no,
+                device_no=device_no,
+                step_no=step_no,
+                SMU=SMU,
+                measurement_params={
+                    "pos_compliance_a": pos_compl,
+                    "neg_compliance_a": neg_compl,
+                    "compliance_pf_a": compliance_pf,
+                    "compliance_pb_a": compliance_pb,
+                    "compliance_nf_a": compliance_nf,
+                    "compliance_nb_a": compliance_nb,
+                    "sweep_delay_s": sweep_delay,
+                    "acquire_delay_s": acq_delay,
+                    "wait_time_s": wait_time,
+                    "sweep_path": sweep_path,
+                    "use_4way_split": use_4way_split,
+                    "include_read_probe": include_read_probe,
+                    "read_probe_mode": read_probe_mode,
+                    "current_autorange": current_autorange,
+                },
+                protocol_context=protocol_context,
+            )
             saved_file_s = Data_Handler.save_file(
-                sweep_data, "Sweep", sample_no, device_no, cont_current, height, step_no=step_no, save_directory=save_directory
+                sweep_data, "Sweep", sample_no, device_no,
+                cont_current=cont_current, Z_pos=height, step_no=step_no,
+                save_directory=save_directory,
+                metadata=sweep_metadata,
             )
-            saved_resistance = Data_Handler.save_file(
-                resistance_data, "Resistance", sample_no, device_no, cont_current, height, step_no=step_no, save_directory=save_directory
-            )
+            saved_resistance = None
+            if resistance_data is not None and np.asarray(resistance_data).size > 0:
+                resistance_metadata = self._build_measurement_metadata(
+                    data_name="Resistance",
+                    sample_no=sample_no,
+                    device_no=device_no,
+                    step_no=step_no,
+                    SMU=SMU,
+                    measurement_params={
+                        "probe_source": "dciv_read_probe",
+                        "linked_sweep_path": sweep_path,
+                        "include_read_probe": include_read_probe,
+                        "read_probe_mode": read_probe_mode,
+                    },
+                    protocol_context=protocol_context,
+                )
+                saved_resistance = Data_Handler.save_file(
+                    resistance_data, "Resistance", sample_no, device_no,
+                    cont_current=cont_current, Z_pos=height, step_no=step_no,
+                    save_directory=save_directory,
+                    metadata=resistance_metadata,
+                )
+            else:
+                print("No resistance/read-probe data returned; skipping resistance save.")
             is_measured = True
             if plot :
                 
                 Data_Handler.show_plot(saved_file_s, sample_no, device_no)
-                Data_Handler.show_resistance(saved_resistance, sample_no, device_no)
+                if saved_resistance is not None:
+                    Data_Handler.build_measurement_figure(
+                        saved_resistance,
+                        data_name="Resistance",
+                        sample_id=sample_no,
+                        device_id=device_no,
+                    )
+                    plt.show()
             
         elif not contact : 
             is_measured = False
@@ -633,12 +830,20 @@ class Vipsa_Methods():
             #sweep_data = SMU.list_IV_sweep_manual(sweep_path, pos_compl, neg_compl, delay=sweep_delay, adr=SMU_adress)
             sweep_data = SMU.list_IV_sweep_split(sweep_path, pos_compl, neg_compl, delay=sweep_delay, acq_delay=acq_delay, adr=SMU_adress)
             saved_file_s = Data_Handler.save_file(
-                sweep_data, "Sweep", sample_no, device_no, cont_current, height, step_no=step_no, save_directory=save_directory
+                sweep_data, "Sweep", sample_no, device_no,
+                cont_current=cont_current, Z_pos=height, step_no=step_no,
+                save_directory=save_directory,
             )
             is_measured = True
             if plot :
                 
-                Data_Handler.show_resistance(saved_file_s, sample_no, device_no)
+                Data_Handler.build_measurement_figure(
+                    saved_file_s,
+                    data_name="Resistance",
+                    sample_id=sample_no,
+                    device_id=device_no,
+                )
+                plt.show()
         
         elif not contact : 
             is_measured = False
@@ -653,7 +858,9 @@ class Vipsa_Methods():
                         plot = True, align = True, approach = True, zaber_corr = True, corr_recheck = True, #for correct_course
                         step_size=0.5, test_voltage=0.1, lower_threshold=1e-11, upper_threshold=5e-11, max_attempts=50, delay=1, #for detect_contact_and_move_z
                         save_directory = None, pulse_path = None, 
-                        SMU = None, stage = None, Zaber_x = None, Zaber_y = None, top_light = None):
+                        SMU = None, stage = None, Zaber_x = None, Zaber_y = None, top_light = None,
+                        abort_requested=None, set_acquire_delay=None, current_autorange=False,
+                        protocol_context=None):
         """
         Runs a pulse measurement and saves the file.
         Replaces the old "measure_and_save" method, does exactly the same.
@@ -693,28 +900,67 @@ class Vipsa_Methods():
         
         SMU_adress = SMU.get_address()
         Data_Handler = dh.Data_Handler()
+
+        if self._abort_requested(abort_requested):
+            print("Abort requested before pulse measurement started.")
+            return False, stage.get_current_position()[2], None
         
         if align : #misaligned device
             self.correct_course(move = True, zaber_corr = zaber_corr, recheck = corr_recheck,
                                 Zaber_x = Zaber_x, Zaber_y = Zaber_y, stage = stage, top_light = top_light)
+
+        if self._abort_requested(abort_requested):
+            print("Abort requested after alignment and before pulse approach.")
+            return False, stage.get_current_position()[2], None
             
         if approach : 
             contact, cont_current, height = self.detect_contact_and_move_z(SMU = SMU, stage = stage,
                                                                            step_size = step_size, test_voltage = test_voltage, 
                                                                            lower_threshold = lower_threshold, upper_threshold = upper_threshold, 
-                                                                           max_attempts = max_attempts , delay = delay )
+                                                                           max_attempts = max_attempts , delay = delay,
+                                                                           abort_requested=abort_requested)
             
         else :
             contact = True
             cont_current = SMU.get_contact_current(test_voltage, adr=SMU_adress)
             height = stage.get_current_position()[2]
+
+        if self._abort_requested(abort_requested):
+            print("Abort requested before pulse execution.")
+            return False, height, None
         
         if contact :
             
-            pulse_data = SMU.pulsed_measurement(pulse_path, compliance, pulse_width, adr = SMU_adress)
+            pulse_data = self._call_with_supported_kwargs(
+                SMU.pulsed_measurement,
+                pulse_path,
+                current_compliance=compliance,
+                set_width=pulse_width,
+                set_acquire_delay=set_acquire_delay,
+                adr=SMU_adress,
+                current_autorange=current_autorange,
+            )
             #pulse_data = SMU.list_IV_sweep_manual(pulse_path, compliance, compliance*100, delay=pulse_width, adr=SMU_adress)
+            pulse_metadata = self._build_measurement_metadata(
+                data_name="Pulse",
+                sample_no=sample_no,
+                device_no=device_no,
+                step_no=step_no,
+                SMU=SMU,
+                measurement_params={
+                    "compliance_a": compliance,
+                    "pulse_width_s": pulse_width,
+                    "set_acquire_delay_s": set_acquire_delay,
+                    "pulse_path": pulse_path,
+                    "current_autorange": current_autorange,
+                },
+                protocol_context=protocol_context,
+            )
             saved_file_p = Data_Handler.save_file(
-                pulse_data, "Pulse", sample_no, device_no, cont_current, height, step_no=step_no, save_directory=save_directory
+                pulse_data, "Pulse", sample_no, device_no,
+                cont_current=cont_current, Z_pos=height, step_no=step_no,
+                save_directory=save_directory,
+                metadata=pulse_metadata,
             )
             is_measured = True
             if plot :
@@ -735,7 +981,8 @@ class Vipsa_Methods():
                         save_directory = None, sweep_path = None, pulse_path = None, update_sweep = False, wait_time = 0,
                         SMU = None, stage = None, Zaber_x = None, Zaber_y = None, top_light = None,
                         compliance_pf = None, compliance_pb = None, compliance_nf = None, compliance_nb = None,
-                        use_4way_split = True):
+                        use_4way_split = True, include_read_probe=True, abort_requested=None, progress_callback=None,
+                        current_autorange=False):
 
         """
         Performs IV measurements on a grid of devices.
@@ -833,6 +1080,9 @@ class Vipsa_Methods():
         i = start_index        
         # Move the stage gridwise and perform measurement
         for point in grid_to_move_sorted[start_index:]:
+            if self._abort_requested(abort_requested):
+                print("Abort requested during grid DCIV run.")
+                break
             
             device_ID, x_coord, y_coord = point
             print(f"Moving to device {device_ID} at X: {x_coord}, Y: {y_coord}")
@@ -852,7 +1102,8 @@ class Vipsa_Methods():
                                 save_directory, sweep_path, wait_time,
                                 SMU, stage, Zaber_x, Zaber_y, top_light,
                                 compliance_pf, compliance_pb, compliance_nf, compliance_nb,
-                                use_4way_split)
+                                use_4way_split, include_read_probe, abort_requested, progress_callback,
+                                current_autorange)
             
             stage.flush()
             
@@ -912,11 +1163,15 @@ class Vipsa_Methods():
             
             stage.move_z_by(-5)
             
-            meas_status, z_height, file = self.run_single_DCIV(sample_ID, device_ID, pos_compl, neg_compl, sweep_delay, 
-                                plot, align, approach, zaber_corr, corr_recheck, #for correct_course
-                                step_size, test_voltage, lower_threshold, upper_threshold, max_attempts, delay, #for detect_contact_and_move_z
-                                save_directory, sweep_path, 
-                                SMU, stage, Zaber_x, Zaber_y, top_light)
+            meas_status, z_height, file = self.run_single_DCIV(
+                                sample_no=sample_ID, device_no=device_ID, pos_compl=pos_compl, neg_compl=neg_compl,
+                                sweep_delay=sweep_delay, plot=plot, align=align, approach=approach,
+                                zaber_corr=zaber_corr, corr_recheck=corr_recheck,
+                                step_size=step_size, test_voltage=test_voltage,
+                                lower_threshold=lower_threshold, upper_threshold=upper_threshold,
+                                max_attempts=max_attempts, delay=delay,
+                                save_directory=save_directory, sweep_path=sweep_path,
+                                SMU=SMU, stage=stage, Zaber_x=Zaber_x, Zaber_y=Zaber_y, top_light=top_light)
         
             
             data = data_handler.IV_calculations(file)
@@ -971,11 +1226,15 @@ class Vipsa_Methods():
             stage.move_z_by(20)
             
             # Measure and save the data
-            meas_status, z_height, file = self.run_single_DCIV(sample_ID, device_ID, pos_compl, neg_compl, sweep_delay, 
-                                plot, align, approach, zaber_corr, corr_recheck,                                #for correct_course
-                                step_size, test_voltage, lower_threshold, upper_threshold, max_attempts, delay, #for detect_contact_and_move_z
-                                save_directory, sweep_path, 
-                                SMU, stage, Zaber_x, Zaber_y, top_light)
+            meas_status, z_height, file = self.run_single_DCIV(
+                                sample_no=sample_ID, device_no=device_ID, pos_compl=pos_compl, neg_compl=neg_compl,
+                                sweep_delay=sweep_delay, plot=plot, align=align, approach=approach,
+                                zaber_corr=zaber_corr, corr_recheck=corr_recheck,
+                                step_size=step_size, test_voltage=test_voltage,
+                                lower_threshold=lower_threshold, upper_threshold=upper_threshold,
+                                max_attempts=max_attempts, delay=delay,
+                                save_directory=save_directory, sweep_path=sweep_path,
+                                SMU=SMU, stage=stage, Zaber_x=Zaber_x, Zaber_y=Zaber_y, top_light=top_light)
             
             print("Running calculations...")
             data = data_handler.IV_calculations(file)                       
@@ -1132,7 +1391,9 @@ class Vipsa_Methods():
         return True, "OK"
 
     def _execute_protocol_step(self, config, sample_no=None, device_no=None, step_no = None, save_directory=None,
-                               SMU=None, stage=None, Zaber_x=None, Zaber_y=None, top_light=None):
+                               SMU=None, stage=None, Zaber_x=None, Zaber_y=None, top_light=None,
+                               abort_requested=None, progress_callback=None, protocol_context=None,
+                               runtime_settings=None, runtime_profile="single"):
         """Execute a single protocol step config. Returns a result dict."""
         ctype = config.get('type')
         params = config.get('params', {})
@@ -1152,14 +1413,43 @@ class Vipsa_Methods():
         if top_light is None:
             top_light = getattr(self, 'top_light', None)
 
+        selected_smu = SMU
+        if isinstance(SMU, dict):
+            default_smu = 'keithley' if ctype == 'DCIV' else 'keysight'
+            requested_smu = str(
+                params.get('smu', params.get('smu_type', params.get('smu_select', default_smu)))
+            ).strip().lower()
+            if "keithley" in requested_smu or "2450" in requested_smu:
+                requested_smu = "keithley"
+            elif "keysight" in requested_smu or "b290" in requested_smu:
+                requested_smu = "keysight"
+            selected_smu = SMU.get(requested_smu)
+            if selected_smu is None:
+                available = ", ".join(sorted(SMU.keys()))
+                raise ValueError(f"Requested SMU '{requested_smu}' is not connected. Available: {available}")
+
         try:
             if ctype == 'DCIV':
+                contact_group = 'grid' if runtime_profile == 'grid' else 'single_dciv'
                 pos_compl = float(params.get('pos_compl', params.get('pos_comp', 1e-3)))
                 neg_compl = float(params.get('neg_compl', params.get('neg_comp', -1e-3)))
                 sweep_delay = params.get('sweep_delay', None)
                 sweep_path = params.get('sweep_path', None)
                 align = params.get('align', True)
                 approach = params.get('approach', True)
+                current_autorange = params.get('current_autorange', self._runtime_setting(runtime_settings, contact_group, 'current_autorange', False))
+                use_4way_split = params.get('use_4way_split', True)
+                include_read_probe = params.get('include_read_probe', True)
+                read_probe_mode = params.get('read_probe_mode', 'between_segments')
+                zaber_corr = params.get('zaber_corr', self._runtime_setting(runtime_settings, 'alignment', 'zaber_corr', True))
+                corr_recheck = params.get('corr_recheck', self._runtime_setting(runtime_settings, 'alignment', 'recheck', True))
+                step_size = float(params.get('step_size', self._runtime_setting(runtime_settings, contact_group, 'step_size', 0.5)))
+                test_voltage = float(params.get('test_voltage', self._runtime_setting(runtime_settings, contact_group, 'test_voltage', 0.05)))
+                lower_threshold = float(params.get('lower_threshold', self._runtime_setting(runtime_settings, contact_group, 'lower_threshold', 1e-11)))
+                upper_threshold = float(params.get('upper_threshold', self._runtime_setting(runtime_settings, contact_group, 'upper_threshold', 5e-11)))
+                max_attempts = int(params.get('max_attempts', self._runtime_setting(runtime_settings, contact_group, 'max_attempts', 50)))
+                delay = float(params.get('delay', self._runtime_setting(runtime_settings, contact_group, 'delay', 1)))
+                # call existing method
                 out = self.run_single_DCIV(
                     sample_no=sample_no,
                     device_no=device_no,
@@ -1171,23 +1461,49 @@ class Vipsa_Methods():
                     plot=False,
                     align=align,
                     approach=approach,
+                    zaber_corr=zaber_corr,
+                    corr_recheck=corr_recheck,
+                    step_size=step_size,
+                    test_voltage=test_voltage,
+                    lower_threshold=lower_threshold,
+                    upper_threshold=upper_threshold,
+                    max_attempts=max_attempts,
+                    delay=delay,
                     save_directory=save_directory,
                     sweep_path=sweep_path,
-                    SMU=SMU,
+                    SMU=selected_smu,
                     stage=stage,
                     Zaber_x=Zaber_x,
                     Zaber_y=Zaber_y,
                     top_light=top_light,
+                    use_4way_split=use_4way_split,
+                    include_read_probe=include_read_probe,
+                    current_autorange=current_autorange,
+                    read_probe_mode=read_probe_mode,
+                    abort_requested=abort_requested,
+                    progress_callback=progress_callback,
+                    protocol_context=protocol_context,
                 )
                 result['status'] = 'ok'
                 result['output'] = out
 
             elif ctype == 'PULSE':
+                contact_group = 'grid' if runtime_profile == 'grid' else 'single_pulse'
                 compliance = float(params.get('compliance', params.get('pulse_comp', 1e-3)))
                 pulse_width = params.get('pulse_width', None)
                 pulse_path = params.get('pulse_path', None)
+                set_acquire_delay = params.get('set_acquire_delay', None)
                 align = params.get('align', True)
                 approach = params.get('approach', True)
+                current_autorange = params.get('current_autorange', self._runtime_setting(runtime_settings, contact_group, 'current_autorange', False))
+                zaber_corr = params.get('zaber_corr', self._runtime_setting(runtime_settings, 'alignment', 'zaber_corr', True))
+                corr_recheck = params.get('corr_recheck', self._runtime_setting(runtime_settings, 'alignment', 'recheck', True))
+                step_size = float(params.get('step_size', self._runtime_setting(runtime_settings, contact_group, 'step_size', 0.5)))
+                test_voltage = float(params.get('test_voltage', self._runtime_setting(runtime_settings, contact_group, 'test_voltage', 0.1)))
+                lower_threshold = float(params.get('lower_threshold', self._runtime_setting(runtime_settings, contact_group, 'lower_threshold', 1e-11)))
+                upper_threshold = float(params.get('upper_threshold', self._runtime_setting(runtime_settings, contact_group, 'upper_threshold', 5e-11)))
+                max_attempts = int(params.get('max_attempts', self._runtime_setting(runtime_settings, contact_group, 'max_attempts', 50)))
+                delay = float(params.get('delay', self._runtime_setting(runtime_settings, contact_group, 'delay', 1)))
                 out = self.run_single_pulse(
                     sample_no=sample_no,
                     device_no=device_no,
@@ -1197,86 +1513,52 @@ class Vipsa_Methods():
                     plot=False,
                     align=align,
                     approach=approach,
+                    zaber_corr=zaber_corr,
+                    corr_recheck=corr_recheck,
+                    step_size=step_size,
+                    test_voltage=test_voltage,
+                    lower_threshold=lower_threshold,
+                    upper_threshold=upper_threshold,
+                    max_attempts=max_attempts,
+                    delay=delay,
                     save_directory=save_directory,
                     pulse_path=pulse_path,
-                    SMU=SMU,
+                    set_acquire_delay=set_acquire_delay,
+                    SMU=selected_smu,
                     stage=stage,
                     Zaber_x=Zaber_x,
                     Zaber_y=Zaber_y,
                     top_light=top_light,
-                )
-                result['status'] = 'ok'
-                result['output'] = out
-
-            elif ctype == 'RESISTANCE':
-                pos_compl = float(params.get('pos_compl', 1e-3))
-                neg_compl = float(params.get('neg_compl', 1e-2))
-                sweep_delay = params.get('sweep_delay', None)
-                sweep_path = params.get('sweep_path', None)
-                align = params.get('align', True)
-                approach = params.get('approach', True)
-                out = self.run_resistance_measurement(
-                    sample_no=sample_no,
-                    device_no=device_no,
-                    pos_compl=pos_compl,
-                    neg_compl=neg_compl,
-                    sweep_delay=sweep_delay,
-                    step_no=step_no,
-                    plot=False,
-                    align=align,
-                    approach=approach,
-                    save_directory=save_directory,
-                    sweep_path=sweep_path,
-                    SMU=SMU,
-                    stage=stage,
-                    Zaber_x=Zaber_x,
-                    Zaber_y=Zaber_y,
-                    top_light=top_light,
+                    abort_requested=abort_requested,
+                    current_autorange=current_autorange,
+                    protocol_context=protocol_context,
                 )
                 result['status'] = 'ok'
                 result['output'] = out
 
             elif ctype == 'ALIGN':
                 # params may include zaber_corr and recheck
-                zaber_corr = params.get('zaber_corr', True)
-                recheck = params.get('recheck', True)
+                zaber_corr = params.get('zaber_corr', self._runtime_setting(runtime_settings, 'alignment', 'zaber_corr', True))
+                recheck = params.get('recheck', self._runtime_setting(runtime_settings, 'alignment', 'recheck', True))
                 self.correct_course(move=True, zaber_corr=zaber_corr, recheck=recheck,
                                      Zaber_x=Zaber_x, Zaber_y=Zaber_y, stage=stage, top_light=top_light)
                 result['status'] = 'ok'
                 result['output'] = None
 
             elif ctype == 'APPROACH':
-                step_size = float(params.get('step_size', 1))
-                test_voltage = float(params.get('test_voltage', 0.1))
-                lower = float(params.get('lower_threshold', 1e-11))
-                upper = float(params.get('upper_threshold', 5e-11))
-                max_attempts = int(params.get('max_attempts', 50))
-                delay = float(params.get('delay', 0.05))
-                out = self.detect_contact_and_move_z(SMU=SMU, stage=stage, step_size=step_size,
+                contact_group = 'grid' if runtime_profile == 'grid' else 'single_dciv'
+                step_size = float(params.get('step_size', self._runtime_setting(runtime_settings, contact_group, 'step_size', 1)))
+                test_voltage = float(params.get('test_voltage', self._runtime_setting(runtime_settings, contact_group, 'test_voltage', 0.1)))
+                lower = float(params.get('lower_threshold', self._runtime_setting(runtime_settings, contact_group, 'lower_threshold', 1e-11)))
+                upper = float(params.get('upper_threshold', self._runtime_setting(runtime_settings, contact_group, 'upper_threshold', 5e-11)))
+                max_attempts = int(params.get('max_attempts', self._runtime_setting(runtime_settings, contact_group, 'max_attempts', 50)))
+                delay = float(params.get('delay', self._runtime_setting(runtime_settings, contact_group, 'delay', 0.05)))
+                out = self.detect_contact_and_move_z(SMU=selected_smu, stage=stage, step_size=step_size,
                                                      test_voltage=test_voltage, lower_threshold=lower,
-                                                     upper_threshold=upper, max_attempts=max_attempts, delay=delay)
+                                                     upper_threshold=upper, max_attempts=max_attempts, delay=delay,
+                                                     abort_requested=abort_requested)
                 result['status'] = 'ok'
                 result['output'] = out
-
-            elif ctype == 'DELAY':
-                duration = float(params.get('duration', 0))
-                note = params.get('note', '')
-                if note:
-                    print(f"Protocol delay note: {note}")
-                time.sleep(max(duration, 0))
-                result['status'] = 'ok'
-                result['output'] = {'duration': duration, 'note': note}
-
-            elif ctype == 'LOG_MESSAGE':
-                message = params.get('message', '')
-                print(message)
-                result['status'] = 'ok'
-                result['output'] = message
-
-            elif ctype == 'CUSTOM':
-                print(f"Custom protocol step parameters: {params}")
-                result['status'] = 'ok'
-                result['output'] = params
 
             else:
                 print(f"Unknown protocol step type: {ctype}")
@@ -1290,7 +1572,9 @@ class Vipsa_Methods():
         return result
 
     def run_protocol(self, protocol_list_configs, sample_no=None, device_no=None, save_directory=None,
-                     SMU=None, stage=None, Zaber_x=None, Zaber_y=None, top_light=None, stop_on_error=False):
+                     SMU=None, stage=None, Zaber_x=None, Zaber_y=None, top_light=None,
+                     stop_on_error=False, abort_requested=None, progress_callback=None,
+                     runtime_settings=None, runtime_profile="single"):
         """Execute a list of protocol step configs on a single target.
 
         Returns a list of results for each step.
@@ -1302,10 +1586,20 @@ class Vipsa_Methods():
 
         results = []
         for i, step in enumerate(protocol_list_configs):
+            if self._abort_requested(abort_requested):
+                print(f"Protocol abort requested before step {i+1}.")
+                results.append({"step": step.get("type"), "status": "aborted", "output": "Abort requested"})
+                break
             print(f"Executing protocol step {i+1}/{len(protocol_list_configs)}: {step.get('type')}")
+            protocol_context = self._build_protocol_context(protocol_list_configs, i, step)
             res = self._execute_protocol_step(step, sample_no=sample_no, device_no=device_no, step_no = i,
                                              save_directory=save_directory, SMU=SMU, stage=stage,
-                                             Zaber_x=Zaber_x, Zaber_y=Zaber_y, top_light=top_light)
+                                             Zaber_x=Zaber_x, Zaber_y=Zaber_y, top_light=top_light,
+                                             abort_requested=abort_requested,
+                                             progress_callback=progress_callback,
+                                             protocol_context=protocol_context,
+                                             runtime_settings=runtime_settings,
+                                             runtime_profile=runtime_profile)
             results.append(res)
             if res.get('status') in ('error', 'failed') and stop_on_error:
                 print(f"Stopping protocol due to error at step {i+1}")

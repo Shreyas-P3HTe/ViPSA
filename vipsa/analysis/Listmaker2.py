@@ -5,6 +5,8 @@ Enhanced standalone list maker for voltage sweeps and pulse trains.
 
 import csv
 import json
+import os
+import sys
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
@@ -13,6 +15,17 @@ try:
     import PySimpleGUI as sg
 except ModuleNotFoundError:
     sg = None
+
+PACKAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if PACKAGE_ROOT not in sys.path:
+    sys.path.insert(0, PACKAGE_ROOT)
+
+try:
+    from vipsa.analysis.sweep_generation import SWEEP_MODE_OPTIONS
+    from vipsa.analysis.sweep_generation import generate_voltage_data as generate_sweep_voltage_data
+except ModuleNotFoundError:
+    from sweep_generation import SWEEP_MODE_OPTIONS
+    from sweep_generation import generate_voltage_data as generate_sweep_voltage_data
 
 
 EPSILON = 1e-9
@@ -129,39 +142,20 @@ def generate_voltage_data(
     cycles,
     peak_hold_steps=0,
     return_to_zero=True,
+    sweep_mode="positive_first",
 ):
-    voltages = []
-    times = []
-    current_time = 0.0
-
-    if forming_cycle:
-        forming_sequence = build_bidirectional_cycle(
-            forming_voltage,
-            reset_voltage,
-            step_voltage,
-            peak_hold_steps=peak_hold_steps,
-        )
-        for voltage in forming_sequence:
-            voltages.append(voltage)
-            times.append(round(current_time, 12))
-            current_time += timer_delay
-
-    for _ in range(cycles):
-        cycle_sequence = build_bidirectional_cycle(
-            forward_voltage,
-            reset_voltage,
-            step_voltage,
-            peak_hold_steps=peak_hold_steps,
-        )
-        for voltage in cycle_sequence:
-            voltages.append(voltage)
-            times.append(round(current_time, 12))
-            current_time += timer_delay
-
-    if return_to_zero and voltages and abs(voltages[-1]) > EPSILON:
-        voltages.append(0.0)
-        times.append(round(current_time, 12))
-
+    times, voltages, _cycle_numbers = generate_sweep_voltage_data(
+        forward_voltage=forward_voltage,
+        reset_voltage=reset_voltage,
+        step_voltage=step_voltage,
+        timer_delay=timer_delay,
+        forming_cycle=forming_cycle,
+        forming_voltage=forming_voltage,
+        cycles=cycles,
+        peak_hold_steps=peak_hold_steps,
+        return_to_zero=return_to_zero,
+        sweep_mode=sweep_mode,
+    )
     return times, voltages
 
 

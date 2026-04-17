@@ -1,0 +1,18 @@
+flowchart LR
+    node_vipsa_analysis["vipsa.analysis"]
+    node_vipsa_analysis_Vision["vipsa.analysis.Vision"]
+    node_vipsa_gui_ProtocolEditor_tk["vipsa.gui.ProtocolEditor_tk"]
+    node_vipsa_gui_Viewfinder4_tk["vipsa.gui.Viewfinder4_tk"]
+    node_vipsa_hardware_Openflexture["vipsa.hardware.Openflexture"]
+    node_vipsa_hardware_Source_Measure_Unit["vipsa.hardware.Source_Measure_Unit"]
+    node_vipsa_workflows_Main4["vipsa.workflows.Main4"]
+    node_vipsa_gui_Viewfinder4_tk --> node_vipsa_analysis_Vision
+    node_vipsa_gui_Viewfinder4_tk --> node_vipsa_gui_ProtocolEditor_tk
+    node_vipsa_gui_Viewfinder4_tk --> node_vipsa_hardware_Openflexture
+    node_vipsa_gui_Viewfinder4_tk --> node_vipsa_hardware_Source_Measure_Unit
+    node_vipsa_gui_Viewfinder4_tk --> node_vipsa_workflows_Main4
+    node_vipsa_workflows_Main4 --> node_vipsa_analysis
+    node_vipsa_workflows_Main4 --> node_vipsa_analysis_Vision
+    node_vipsa_workflows_Main4 --> node_vipsa_hardware_Openflexture
+    node_vipsa_workflows_Main4 --> node_vipsa_hardware_Source_Measure_Unit
+    style node_vipsa_gui_Viewfinder4_tk fill:#f5c095,stroke:#333,stroke-width:2px

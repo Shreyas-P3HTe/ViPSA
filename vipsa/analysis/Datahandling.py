@@ -9,10 +9,19 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+from matplotlib.figure import Figure
 import csv
+import json
 import colorcet as cc
 import statistics as stat
 import time
+
+try:
+    from vipsa.analysis.sweep_generation import generate_voltage_data as generate_sweep_voltage_data
+    from vipsa.analysis.sweep_generation import infer_cycle_numbers
+except ModuleNotFoundError:
+    from sweep_generation import generate_voltage_data as generate_sweep_voltage_data
+    from sweep_generation import infer_cycle_numbers
 
 class Data_Handler():
     
@@ -46,9 +55,268 @@ class Data_Handler():
                 file.write(f"Protocol: {protocol}\n")
     
         print(f"Metadata saved to {file_path}")
+
+    def _normalize_measurement_data(self, data):
+        expected_columns = [
+            'Time(T)',
+            'Voltage (V)',
+            'Current (A)',
+            'V_cmd (V)',
+            'V_meas (V)',
+            'V_error (V)',
+            'Cycle Number',
+        ]
+
+        if isinstance(data, pd.DataFrame):
+            df = data.copy()
+        elif isinstance(data, list) and data and isinstance(data[0], dict):
+            df = pd.DataFrame.from_records(data)
+        else:
+            array_data = np.asarray(data)
+            if array_data.size == 0:
+                df = pd.DataFrame(columns=['Time(T)', 'Voltage (V)', 'Current (A)'])
+            else:
+                if array_data.ndim == 1:
+                    matched_width = None
+                    for width in (7, 6, 5, 4, 3):
+                        if array_data.shape[0] % width == 0:
+                            matched_width = width
+                            break
+                    if matched_width is None:
+                        raise ValueError(f"Unsupported flat measurement shape {array_data.shape}.")
+                    array_data = array_data.reshape(-1, matched_width)
+
+                width_map = {
+                    3: ['Time(T)', 'Voltage (V)', 'Current (A)'],
+                    4: ['Time(T)', 'Voltage (V)', 'Current (A)', 'V_meas (V)'],
+                    5: ['Time(T)', 'Voltage (V)', 'Current (A)', 'V_meas (V)', 'Cycle Number'],
+                    6: ['Time(T)', 'Voltage (V)', 'Current (A)', 'V_cmd (V)', 'V_meas (V)', 'V_error (V)'],
+                    7: expected_columns,
+                }
+                columns = width_map.get(array_data.shape[1])
+                if columns is None:
+                    raise ValueError(
+                        f"Expected measurement data with 3-7 columns, got shape {array_data.shape}."
+                    )
+                df = pd.DataFrame(array_data, columns=columns)
+
+        rename_map = {
+            'Time (s)': 'Time(T)',
+            'Timestamp (s)': 'Time(T)',
+            'Voltage': 'Voltage (V)',
+            'Current': 'Current (A)',
+            'V_cmd': 'V_cmd (V)',
+            'V_meas': 'V_meas (V)',
+            'V_error': 'V_error (V)',
+            'cycle_number': 'Cycle Number',
+        }
+        df.rename(columns=rename_map, inplace=True)
+
+        if 'V_cmd (V)' not in df.columns and 'Voltage (V)' in df.columns:
+            df['V_cmd (V)'] = df['Voltage (V)']
+        if 'Voltage (V)' not in df.columns and 'V_cmd (V)' in df.columns:
+            df['Voltage (V)'] = df['V_cmd (V)']
+        if 'V_meas (V)' not in df.columns:
+            df['V_meas (V)'] = np.nan
+        if 'V_error (V)' not in df.columns:
+            if 'V_cmd (V)' in df.columns and 'V_meas (V)' in df.columns:
+                df['V_error (V)'] = pd.to_numeric(df['V_meas (V)'], errors='coerce') - pd.to_numeric(df['V_cmd (V)'], errors='coerce')
+            else:
+                df['V_error (V)'] = np.nan
+        if 'Cycle Number' not in df.columns or pd.to_numeric(df['Cycle Number'], errors='coerce').isna().all():
+            voltages = pd.to_numeric(df.get('V_cmd (V)', df.get('Voltage (V)', pd.Series(dtype=float))), errors='coerce').fillna(0.0).tolist()
+            df['Cycle Number'] = infer_cycle_numbers(voltages)
+
+        for column in expected_columns:
+            if column not in df.columns:
+                df[column] = np.nan
+
+        return df[expected_columns]
+
+    def _infer_plot_kind(self, csvpath, metadata=None):
+        if metadata and metadata.get("data_name"):
+            return str(metadata["data_name"]).lower()
+        folder_name = os.path.basename(os.path.dirname(csvpath)).lower()
+        return folder_name
+
+    def _create_figure(self, figsize, dpi=150, managed=True):
+        if managed:
+            return plt.subplots(figsize=figsize, dpi=dpi)
+        figure = Figure(figsize=figsize, dpi=dpi)
+        axis = figure.add_subplot(111)
+        return figure, axis
+
+    def _build_sweep_figure(self, df, sample_id="NA", device_id="NA", managed=True):
+        data = df.copy()
+        data['Current (A)'] = pd.to_numeric(data['Current (A)'], errors='coerce').abs()
+        data['Voltage (V)'] = pd.to_numeric(data['Voltage (V)'], errors='coerce')
+
+        figure, axis = self._create_figure(figsize=(10, 4), dpi=150, managed=managed)
+        num_colors = 25
+        colors = cc.glasbey[:num_colors]
+
+        cycle_column = pd.to_numeric(data.get('Cycle Number'), errors='coerce').fillna(1).astype(int)
+        plotted = False
+        for index, cycle_number in enumerate(sorted(cycle_column.unique()), start=0):
+            cycle_df = data[cycle_column == cycle_number]
+            if cycle_df.empty:
+                continue
+            axis.plot(
+                cycle_df['Voltage (V)'],
+                cycle_df['Current (A)'],
+                linestyle='-',
+                color=colors[index % len(colors)],
+                label=f'Cycle {cycle_number}',
+            )
+            plotted = True
+
+        if not plotted:
+            axis.plot(data['Voltage (V)'], data['Current (A)'], color=colors[0], label='Measurement')
+
+        curr = data["Contact Current (A)"].iloc[0] if "Contact Current (A)" in data and not data.empty else np.nan
+        height = data["Z position"].iloc[0] if "Z position" in data and not data.empty else np.nan
+        axis.set_ylabel('Current (log scale)')
+        axis.set_xlabel('Voltage')
+        axis.set_yscale('log')
+        axis.grid(True)
+        axis.legend(title="Cycles", bbox_to_anchor=(1.02, 1), loc="upper left")
+        axis.set_title(
+            f"Sample {sample_id} | Device {device_id} | Contact_current = {curr} A | Contact_height = {height}"
+        )
+        figure.tight_layout()
+        return figure
+
+    def _build_pulse_figure(self, df, sample_id="NA", device_id="NA", managed=True):
+        data = df.copy()
+        data["Voltage (V)"] = pd.to_numeric(data["Voltage (V)"], errors='coerce')
+        data["Current (A)"] = pd.to_numeric(data["Current (A)"], errors='coerce').abs()
+        if "Cycle Number" in data:
+            data["Pulse number"] = pd.to_numeric(data["Cycle Number"], errors='coerce').fillna(1).astype(int)
+        else:
+            data["Pulse number"] = data.index + 1
+
+        figure, axis = self._create_figure(figsize=(12, 5), dpi=150, managed=managed)
+        set_voltage = data["Voltage (V)"].max() if not data.empty else np.nan
+        reset_voltage = data["Voltage (V)"].min() if not data.empty else np.nan
+
+        read_voltage_candidates = data[
+            (data["Voltage (V)"] > reset_voltage)
+            & (data["Voltage (V)"] < set_voltage)
+            & (data["Voltage (V)"] != 0)
+        ]["Voltage (V)"]
+        read_voltage = read_voltage_candidates.iloc[0] if not read_voltage_candidates.empty else None
+
+        if not data.empty:
+            axis.scatter(
+                data.loc[data["Voltage (V)"] == set_voltage, "Pulse number"],
+                data.loc[data["Voltage (V)"] == set_voltage, "Current (A)"],
+                color="green",
+                label=f"Set ({set_voltage} V)",
+                s=8,
+            )
+            axis.scatter(
+                data.loc[data["Voltage (V)"] == reset_voltage, "Pulse number"],
+                data.loc[data["Voltage (V)"] == reset_voltage, "Current (A)"],
+                color="black",
+                label=f"Reset ({reset_voltage} V)",
+                s=8,
+            )
+        if read_voltage is not None:
+            read_df = data[data["Voltage (V)"] == read_voltage]
+            axis.scatter(
+                read_df["Pulse number"],
+                read_df["Current (A)"],
+                color="red",
+                label=f"Read ({read_voltage} V)",
+                s=6,
+            )
+
+        axis.set_xlabel("Cycle number")
+        axis.set_ylabel("Current (A)")
+        axis.set_title(f"Pulse Measurement | Sample {sample_id} | Device {device_id}")
+        axis.set_yscale("log")
+        axis.grid(True)
+        axis.legend()
+        figure.tight_layout()
+        return figure
+
+    def _build_resistance_figure(self, df, sample_id="NA", device_id="NA", managed=True):
+        data = df.copy()
+        if "Current (A)" in data.columns and "Voltage (V)" in data.columns:
+            current = pd.to_numeric(data["Current (A)"], errors='coerce')
+            voltage = pd.to_numeric(data["Voltage (V)"], errors='coerce')
+            resistance = voltage / current.replace(0, np.nan)
+        else:
+            resistance = pd.Series(dtype=float)
+        cycles = pd.to_numeric(data.get("Cycle Number"), errors='coerce').fillna(1)
+
+        figure, axis = self._create_figure(figsize=(8, 4), dpi=150, managed=managed)
+        axis.scatter(cycles, resistance.abs(), marker='.', c='green')
+        axis.set_xlabel("Cycle number")
+        axis.set_ylabel("Resistance (Ohm, log scale)")
+        axis.set_yscale("log")
+        axis.set_title(f"Resistance Probe | Sample {sample_id} | Device {device_id}")
+        axis.grid(True, which="both", ls="-", alpha=0.5)
+        figure.tight_layout()
+        return figure
+
+    def build_measurement_figure(self, csvpath, data_name=None, sample_id="NA", device_id="NA", managed=True):
+        df = pd.read_csv(csvpath)
+        plot_kind = (data_name or self._infer_plot_kind(csvpath)).lower()
+        if plot_kind == "pulse":
+            return self._build_pulse_figure(df, sample_id=sample_id, device_id=device_id, managed=managed)
+        if plot_kind == "resistance":
+            return self._build_resistance_figure(df, sample_id=sample_id, device_id=device_id, managed=managed)
+        return self._build_sweep_figure(df, sample_id=sample_id, device_id=device_id, managed=managed)
+
+    def save_run_artifacts(self, csv_path, figure_or_plot_widget=None, metadata=None):
+        if not csv_path or not os.path.exists(csv_path):
+            return None
+
+        metadata = dict(metadata or {})
+        base_path, _ = os.path.splitext(csv_path)
+        metadata_path = f"{base_path}.metadata.json"
+        plot_path = f"{base_path}.png"
+
+        metadata.setdefault("csv_path", csv_path)
+        metadata.setdefault("plot_path", plot_path)
+        metadata.setdefault("metadata_path", metadata_path)
+
+        with open(metadata_path, "w", encoding="utf-8") as handle:
+            json.dump(metadata, handle, indent=2, default=str)
+
+        figure = None
+        created_figure = False
+        try:
+            if figure_or_plot_widget is not None and hasattr(figure_or_plot_widget, "figure"):
+                figure = figure_or_plot_widget.figure
+            elif figure_or_plot_widget is not None and hasattr(figure_or_plot_widget, "savefig"):
+                figure = figure_or_plot_widget
+            else:
+                figure = self.build_measurement_figure(
+                    csv_path,
+                    data_name=metadata.get("data_name"),
+                    sample_id=metadata.get("sample_id", "NA"),
+                    device_id=metadata.get("device_id", "NA"),
+                    managed=False,
+                )
+                created_figure = True
+
+            figure.savefig(plot_path, dpi=150, bbox_inches="tight")
+        except Exception as exc:
+            print(f"Warning: plot artifact could not be saved for {csv_path}: {exc}")
+        finally:
+            if created_figure and figure is not None:
+                plt.close(figure)
+
+        return {
+            "csv_path": csv_path,
+            "plot_path": plot_path,
+            "metadata_path": metadata_path,
+        }
     
     def save_file(self, data, data_name, sample_id, device_id, cont_current, Z_pos, step_no = None,
-                  save_directory = None):
+                  save_directory = None, metadata=None, figure_or_plot_widget=None):
         '''
 
         Args :
@@ -75,97 +343,37 @@ class Data_Handler():
             file_path = os.path.join(directory_path, f"device_{device_id}.csv")
         else :
             file_path = os.path.join(directory_path, f"device_{device_id}_step_{step_no}.csv")
-        df = pd.DataFrame(data, columns=['Time(T)', 'Voltage (V)', 'Current (A)'])
+        df = self._normalize_measurement_data(data)
         df['Contact Current (A)'] = cont_current
         df['Z position'] = Z_pos
         df.to_csv(file_path, index=True)
         print(f"Data saved to {file_path}")
+
+        artifact_metadata = dict(metadata or {})
+        artifact_metadata.update(
+            {
+                "data_name": data_name,
+                "sample_id": sample_id,
+                "device_id": device_id,
+                "contact_current_a": cont_current,
+                "z_position": Z_pos,
+                "step_no": step_no,
+            }
+        )
+        try:
+            self.save_run_artifacts(
+                file_path,
+                figure_or_plot_widget=figure_or_plot_widget,
+                metadata=artifact_metadata,
+            )
+        except Exception as exc:
+            print(f"Warning: non-fatal artifact save failure for {file_path}: {exc}")
         
         return file_path
     
     def show_plot(self, csvpath, sample_id = "NA", device_id = "NA"):
-        
-        '''
-        Plots DC-IV from any csv on a semi-log (y log) scale.
-        
-        Needs to have following columns : 
-            'Current (A)'
-            'Voltage (V)'
-            'Contact Current (A)'
-            'Z position'
-            
-        Args :
-            
-            csvpath : CSV to be plotted. 
-            
-        '''
-        
-        df = pd.read_csv(csvpath)
-        
-        # Convert negative current values to their absolute values
-        df['Current (A)'] = df['Current (A)'].abs()
-        
-        # Initialize a figure
-        plt.figure(figsize=(10, 4), dpi=150)        
-                
-        
-        num_colors = 25  # Adjust to match the number of cycles you want to plot
-        
-        # Generate a list of colors from the colormap
-        colors = cc.glasbey[:num_colors]
-        start_index = 0
-        color_idx = 0  # Initialize color index
-        
-        legend_labels = []
-        
-        # Iterate through the DataFrame to find cycles
-        for i in range(1, len(df)):
-            # Detect when a full cycle is complete
-            if df['Voltage (V)'].iloc[i-1] == 0 and df['Voltage (V)'].iloc[i] > 0:
-                # This marks the end of a cycle and the start of a new one
-                if start_index != i-1:  # Prevent plotting on first start
-                    # Plot the completed cycle
-                    plt.plot(df['Voltage (V)'].iloc[start_index:i], 
-                             df['Current (A)'].iloc[start_index:i], 
-                             linestyle='-', 
-                             color=colors[color_idx % len(colors)], 
-                             label=f'Cycle {color_idx + 1}')
-                    # Append the cycle label to legend labels list
-                    legend_labels.append(f'Cycle {color_idx + 1}')
-                    # Change the color for the next cycle
-                    color_idx += 1
-                # Update the start index for the new cycle
-                start_index = i
-        
-        # Plot the remaining cycle, if any
-        if start_index < len(df):
-            plt.plot(df['Voltage (V)'].iloc[start_index:], 
-                     df['Current (A)'].iloc[start_index:], 
-                     linestyle='-', 
-                     color=colors[color_idx % len(colors)], 
-                     label=f'Cycle {color_idx + 1}')
-            legend_labels.append(f'Cycle {color_idx + 1}')
-        
-        Curr = df["Contact Current (A)"].iloc[1]
-        Height = df["Z position"].iloc[1]
-        
-        # Set axis labels
-        plt.ylabel('Current (log scale)')
-        plt.xlabel('Voltage')
-        
-        # Set the y-axis to logarithmic scale
-        plt.yscale('log')
-        #plt.ylim(10e-9, 10e-2)        
-        # Add grid
-        plt.grid(True)
-        
-        # Add legend
-        num_column = -(-num_colors // 15)
-        plt.legend(title="Cycles", bbox_to_anchor = (1.02,1), loc= "upper left", ncol = num_column)
-        plt.tight_layout()
-        # Show the plot
-        plt.title(f"Sample {sample_id} | Device {device_id} | Contact_current = {Curr} A | Contact_height = {Height}")
-        plt.show() 
+        self.build_measurement_figure(csvpath, data_name="Sweep", sample_id=sample_id, device_id=device_id)
+        plt.show()
         
     def show_plot_with_dashes(self, csvpath, sample_id="NA", device_id="NA"):
     
@@ -398,82 +606,21 @@ class Data_Handler():
         plt.tight_layout()  # Adjust layout to prevent labels from overlapping
         plt.show()
 
+    def show_resistance(self, csvpath, sample_id="NA", device_id="NA", cycles=11):
+        """
+        Compatibility wrapper for resistance plotting.
+
+        The older implementation assumed a fixed CSV column order and fixed-size
+        probe blocks, which breaks once richer saved datasets add columns like
+        `V_cmd (V)` or `V_meas (V)`. Route all resistance plotting through the
+        shared figure builder instead so post-save plotting stays compatible with
+        the current save format.
+        """
+        self.build_measurement_figure(csvpath, data_name="Resistance", sample_id=sample_id, device_id=device_id)
+        plt.show()
+
     def show_pulse(self, csvpath, sample_id="NA", device_id="NA"):
-        """
-        Plots DC-IV from a CSV on a semi-log (y log) scale, coloring first and second reads differently.
-        
-        Args:
-            csvpath: Path to the CSV file to be plotted.
-            sample_id: Sample ID (optional).
-            device_id: Device ID (optional).
-        """
-        
-        df = pd.read_csv(csvpath)
-        
-        # Add the "Pulse number" column
-        df["Pulse number"] = df.index // 8 + 1
-        
-        # Initialize a plot
-        plt.figure(figsize=(20, 6))
-        
-        set_voltage = df["Voltage (V)"].max()
-        reset_voltage = df["Voltage (V)"].min()
-        
-        # Filter for non-zero values between set and reset voltages
-        read_voltage_candidates = df[
-            (df["Voltage (V)"] > reset_voltage)
-            & (df["Voltage (V)"] < set_voltage)
-            & (df["Voltage (V)"] != 0)
-        ]["Voltage (V)"]
-        
-        # Choose a read voltage (e.g., the first valid candidate)
-        read_voltage = read_voltage_candidates.iloc[0] if not read_voltage_candidates.empty else None
-        
-        # Define colors for different voltage conditions
-        colors = {"set": "green", "reset": "black"}
-        if read_voltage is not None:
-          colors["read1"] = "black"
-          colors["read2"] = "red"  # Second read in blue
-        
-        # Plot based on voltage conditions
-        for voltage, color in colors.items():
-          if voltage in ["set", "reset"]:
-            subset = df[df["Voltage (V)"] == voltage]
-            plt.scatter(
-                subset["Pulse number"], subset["Current (A)"], color=color, label=f"{voltage} Voltage", s=2
-            )
-          elif voltage == "read1":
-            # Filter for first read voltage
-            first_read_indices = df[df["Voltage (V)"] == read_voltage].index[:4]
-            first_read_subset = df.loc[first_read_indices]
-            plt.scatter(
-                first_read_subset["Pulse number"],
-                first_read_subset["Current (A)"],
-                color=color,
-                label=f"1st Read ({read_voltage} V)",
-                s=2,
-            )
-          elif voltage == "read2":
-            # Filter for second read voltage
-            second_read_indices = df[df["Voltage (V)"] == read_voltage].index[4:]
-            second_read_subset = df.loc[second_read_indices]
-            plt.scatter(
-                second_read_subset["Pulse number"],
-                second_read_subset["Current (A)"],
-                color=color,
-                label=f"2nd Read ({read_voltage} V)",
-                s=2,
-            )
-        
-        # Set labels, legend, and title
-        plt.xlabel("Pulse number")
-        plt.ylabel("Current (A)")
-        plt.title("Voltage vs Current by Pulse Number")
-        plt.yscale("log")
-        plt.legend()
-        plt.grid()
-        
-        # Show the plot
+        self.build_measurement_figure(csvpath, data_name="Pulse", sample_id=sample_id, device_id=device_id)
         plt.show()
             
     def fold_pos_cycle(self, cycle_df):
@@ -740,74 +887,34 @@ class Data_Handler():
 
 class Listmaker():
     
-    def generate_voltage_data(self,forward_voltage, reset_voltage, step_voltage, timer_delay, forming_cycle, forming_voltage, cycles):
-        voltages = []
-        times = []
-        current_time = 0
-    
-        # Forming cycle if needed
-        if forming_cycle:
-            voltage = 0
-            while voltage <= forming_voltage:
-                voltages.append(voltage)
-                times.append(current_time)
-                current_time += timer_delay
-                voltage += step_voltage
-            
-            voltage -= step_voltage
-            while voltage >= 0:
-                voltages.append(voltage)
-                times.append(current_time)
-                current_time += timer_delay
-                voltage -= step_voltage
-            
-            # Immediate reset sweep after forming cycle
-            voltage = 0
-            while voltage >= reset_voltage:
-                voltages.append(voltage)
-                times.append(current_time)
-                current_time += timer_delay
-                voltage -= step_voltage
-    
-            voltage += step_voltage
-            while voltage <= 0:
-                voltages.append(voltage)
-                times.append(current_time)
-                current_time += timer_delay
-                voltage += step_voltage
-    
-        # Regular cycles
-        for _ in range(cycles):
-            # Forward voltage cycle
-            voltage = 0
-            while voltage <= forward_voltage:
-                voltages.append(voltage)
-                times.append(current_time)
-                current_time += timer_delay
-                voltage += step_voltage
-    
-            voltage -= step_voltage
-            while voltage >= 0:
-                voltages.append(voltage)
-                times.append(current_time)
-                current_time += timer_delay
-                voltage -= step_voltage
-    
-            # Reset voltage cycle
-            voltage = 0
-            while voltage >= reset_voltage:
-                voltages.append(voltage)
-                times.append(current_time)
-                current_time += timer_delay
-                voltage -= step_voltage
-    
-            voltage += step_voltage
-            while voltage <= 0:
-                voltages.append(voltage)
-                times.append(current_time)
-                current_time += timer_delay
-                voltage += step_voltage
-    
+    def generate_voltage_data(
+        self,
+        forward_voltage,
+        reset_voltage,
+        step_voltage,
+        timer_delay,
+        forming_cycle,
+        forming_voltage,
+        cycles,
+        peak_hold_steps=0,
+        return_to_zero=True,
+        sweep_mode="positive_first",
+        return_cycle_numbers=False,
+    ):
+        times, voltages, cycle_numbers = generate_sweep_voltage_data(
+            forward_voltage=float(forward_voltage),
+            reset_voltage=float(reset_voltage),
+            step_voltage=float(step_voltage),
+            timer_delay=float(timer_delay),
+            forming_cycle=bool(forming_cycle),
+            forming_voltage=None if forming_voltage in (None, "") else float(forming_voltage),
+            cycles=int(cycles),
+            peak_hold_steps=int(peak_hold_steps),
+            return_to_zero=bool(return_to_zero),
+            sweep_mode=sweep_mode,
+        )
+        if return_cycle_numbers:
+            return times, voltages, cycle_numbers
         return times, voltages
 
     def generate_pulsing_data(self, write_pulses, write_voltage, write_width, read_pulses, read_voltage, read_width, erase_pulses, erase_voltage, erase_width, cycles):
@@ -854,12 +961,19 @@ class Listmaker():
     
         return times, voltages
 
-    def save_sweep_to_csv(self, times, voltages, filename):
+    def save_sweep_to_csv(self, times, voltages, filename, cycle_numbers=None):
         with open(filename, 'w', newline='') as csvfile:
             csvwriter = csv.writer(csvfile)
-            csvwriter.writerow(['Time (s)', 'Voltage (V)'])
-            for t, v in zip(times, voltages):
-                csvwriter.writerow([t, v])
+            header = ['Time (s)', 'Voltage (V)']
+            if cycle_numbers is not None:
+                header.append('Cycle Number')
+            csvwriter.writerow(header)
+            if cycle_numbers is None:
+                for t, v in zip(times, voltages):
+                    csvwriter.writerow([t, v])
+            else:
+                for t, v, cycle in zip(times, voltages, cycle_numbers):
+                    csvwriter.writerow([t, v, cycle])
        
     def make_updated_sweep(self, base_file_path, fwd_volt, reset_volt, step_voltage, timer_delay):
 
