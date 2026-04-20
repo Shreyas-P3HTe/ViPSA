@@ -31,6 +31,19 @@ STEP_TEMPLATES = {
             "set_acquire_delay": 0.0005,
         },
     },
+    "CV_CURRENT_PROBE": {
+        "display_name": "Constant Voltage Current Probe",
+        "params": {
+            "voltage": 0.1,
+            "duration": 1.0,
+            "sample_interval": 0.1,
+            "compliance": 0.001,
+            "align": False,
+            "approach": False,
+            "smu_select": "Keithley2450",
+            "current_autorange": False,
+        },
+    },
     "ALIGN": {
         "display_name": "Correct Course (Align)",
         "params": {
@@ -208,6 +221,12 @@ class ProtocolStepEditorDialog(tk.Toplevel):
                 return params["pos_compl"] > 0 and params["neg_compl"] > 0 and params["sweep_delay"] >= 0
             if step_type == "PULSE":
                 return params["compliance"] > 0 and params["pulse_width"] > 0
+            if step_type == "CV_CURRENT_PROBE":
+                return (
+                    params["compliance"] > 0
+                    and params["duration"] >= 0
+                    and params["sample_interval"] > 0
+                )
             if step_type == "APPROACH":
                 return params["step_size"] > 0 and params["test_voltage"] > 0 and params["max_attempts"] > 0
             if step_type == "DELAY":
@@ -267,6 +286,11 @@ class ProtocolBuilderTk:
                 parts.append(f"[Compliance: {params.get('compliance')}]")
                 parts.append(f"[Width: {params.get('pulse_width')}]")
                 parts.append(f"[SMU: {params.get('smu_select', 'KeysightB2901BL')}]")
+            elif step_type == "CV_CURRENT_PROBE":
+                parts.append(f"[V: {params.get('voltage')} V]")
+                parts.append(f"[T: {params.get('duration')} s]")
+                parts.append(f"[dt: {params.get('sample_interval')} s]")
+                parts.append(f"[SMU: {params.get('smu_select', 'Keithley2450')}]")
             elif step_type == "APPROACH":
                 parts.append(f"[Threshold: {params.get('lower_threshold')}..{params.get('upper_threshold')}]")
             elif step_type == "DELAY":

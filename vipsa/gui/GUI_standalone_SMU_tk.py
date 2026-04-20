@@ -314,6 +314,15 @@ class StandaloneMeasurementTkApp:
         ttk.Checkbutton(pulse, text="Use Current Autorange", variable=self._bool_var("PULSE_AUTORANGE", False)).grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Button(pulse, text="Run Pulse", command=self.queue_run_pulse).grid(row=3, column=0, sticky="w", pady=(8, 0))
 
+        probe = ttk.LabelFrame(frame, text="Constant Voltage Current Probe", padding=10)
+        probe.pack(fill="x", pady=(10, 0))
+        self._add_entry(probe, "Voltage (V)", "CP_VOLTAGE", "0.1", 0, 0)
+        self._add_entry(probe, "Duration (s)", "CP_DURATION", "1.0", 0, 2)
+        self._add_entry(probe, "Sample Interval (s)", "CP_INTERVAL", "0.1", 1, 0)
+        self._add_entry(probe, "Compliance (A)", "CP_COMP", "0.001", 1, 2)
+        ttk.Checkbutton(probe, text="Use Current Autorange", variable=self._bool_var("CP_AUTORANGE", False)).grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Button(probe, text="Run Current Probe", command=self.queue_run_current_probe).grid(row=3, column=0, sticky="w", pady=(8, 0))
+
     def _create_protocol_tab(self):
         frame = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(frame, text="Protocol")
@@ -631,12 +640,13 @@ class StandaloneMeasurementTkApp:
         self.worker_thread = threading.Thread(target=runner, daemon=True)
         self.worker_thread.start()
 
-    def _reset_live_plot(self, title):
+    def _reset_live_plot(self, title, x_label="Voltage (V)"):
         self.live_plot_title = title
+        self.live_plot_x_label = x_label
         self.live_plot_points = []
         self.live_plot_axis.clear()
         self.live_plot_axis.set_title(title)
-        self.live_plot_axis.set_xlabel("Voltage (V)")
+        self.live_plot_axis.set_xlabel(x_label)
         self.live_plot_axis.set_ylabel("|Current| (A)")
         self.live_plot_axis.set_yscale("log")
         self.live_plot_axis.grid(True, alpha=0.4)
@@ -644,11 +654,17 @@ class StandaloneMeasurementTkApp:
         self.live_plot_canvas.draw_idle()
 
     def _apply_live_plot_chunk(self, chunk, label=None):
+        items = list(chunk or [])
+        x_label = None
+        if items and isinstance(items[0], dict):
+            x_label = items[0].get("plot_x_label")
         if label and label != self.live_plot_title:
-            self._reset_live_plot(label)
-        for item in chunk or []:
+            self._reset_live_plot(label, x_label=x_label or "Voltage (V)")
+        elif x_label and x_label != getattr(self, "live_plot_x_label", "Voltage (V)"):
+            self._reset_live_plot(label or self.live_plot_title, x_label=x_label)
+        for item in items:
             if isinstance(item, dict):
-                voltage = float(item.get("voltage", item.get("V_cmd (V)", item.get("Voltage (V)", 0.0))))
+                voltage = float(item.get("plot_x", item.get("voltage", item.get("V_cmd (V)", item.get("Voltage (V)", 0.0)))))
                 current = abs(float(item.get("current", item.get("Current (A)", 0.0))))
             else:
                 voltage = float(item[1])
@@ -799,6 +815,43 @@ class StandaloneMeasurementTkApp:
         else:
             self._log("Pulse did not complete successfully.\n")
 
+    def queue_run_current_probe(self):
+        if not self._require_connection():
+            return
+        self._run_in_background("Current Probe", self._run_current_probe)
+
+    def _run_current_probe(self):
+        smu = self._set_manual_active_smu(self._string_var("ACTIVE_SMU").get())
+        context = self._measurement_context()
+        self.root.after(0, lambda: self._reset_live_plot("Current Probe", x_label="Time (s)"))
+        measured, height, saved_path = self.vipsa.run_constant_voltage_current_probe(
+            sample_no=self._string_var("SAMPLE").get(),
+            device_no=self._string_var("DEVICE").get(),
+            voltage=float(self._string_var("CP_VOLTAGE").get()),
+            duration=float(self._string_var("CP_DURATION").get()),
+            compliance=float(self._string_var("CP_COMP").get()),
+            sample_interval=float(self._string_var("CP_INTERVAL").get()),
+            plot=False,
+            align=False,
+            approach=False,
+            zaber_corr=False,
+            corr_recheck=False,
+            save_directory=self._string_var("SAVE_DIR").get(),
+            SMU=smu,
+            stage=None,
+            Zaber_x=None,
+            Zaber_y=None,
+            top_light=None,
+            current_autorange=self._bool_var("CP_AUTORANGE").get(),
+            progress_callback=self._live_plot_callback,
+        )
+        if measured:
+            self._augment_saved_metadata(saved_path, context)
+            self.root.after(0, lambda: self._plot_saved_csv(saved_path, "CurrentProbe"))
+            self._log(f"Current probe saved to {saved_path} | height={height}\n")
+        else:
+            self._log("Current probe did not complete successfully.\n")
+
     def _selected_protocol_index(self):
         selection = self.protocol_listbox.curselection()
         return selection[0] if selection else None
@@ -863,16 +916,16 @@ class StandaloneMeasurementTkApp:
         for step in self.protocol_builder.protocol_list_configs:
             step_type = step.get("type")
             params = dict(step.get("params", {}))
-            if step_type not in {"DCIV", "PULSE", "DELAY", "LOG_MESSAGE"}:
+            if step_type not in {"DCIV", "PULSE", "CV_CURRENT_PROBE", "DELAY", "LOG_MESSAGE"}:
                 raise ValueError(f"Standalone GUI does not support protocol step '{step_type}'.")
-            if step_type in {"DCIV", "PULSE"}:
+            if step_type in {"DCIV", "PULSE", "CV_CURRENT_PROBE"}:
                 params["align"] = False
                 params["approach"] = False
             protocol.append({"type": step_type, "params": params})
         protocol_smus = self._ensure_protocol_smus(
             step["params"].get("smu_select", step["params"].get("smu"))
             for step in protocol
-            if step["type"] in {"DCIV", "PULSE"}
+            if step["type"] in {"DCIV", "PULSE", "CV_CURRENT_PROBE"}
         )
         self.root.after(0, lambda: self._reset_live_plot("Protocol"))
         results = self.vipsa.run_protocol(

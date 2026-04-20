@@ -123,6 +123,68 @@ def _parse_keysight_trace(values, point_count, commanded_voltages, fallback_step
         records.append(_measurement_record(timestamp, v_cmd, current, v_meas))
     return records
 
+
+def _emit_progress_chunk(progress_callback, chunk, label=None):
+    if not callable(progress_callback) or not chunk:
+        return
+    try:
+        progress_callback(chunk, label=label)
+    except TypeError:
+        progress_callback(chunk)
+
+
+def _run_constant_voltage_probe_loop(
+    voltage,
+    duration,
+    sample_interval,
+    sample_callback,
+    progress_callback=None,
+    label="Current Probe",
+    stream_chunk=25,
+):
+    duration = float(duration)
+    sample_interval = float(sample_interval)
+    if duration < 0:
+        raise ValueError("duration must be >= 0")
+    if sample_interval <= 0:
+        raise ValueError("sample_interval must be > 0")
+
+    records = []
+    pending = []
+    t0 = time.perf_counter()
+    deadline = t0 + duration
+    sample_index = 0
+
+    while True:
+        target_time = t0 + (sample_index * sample_interval)
+        if sample_index > 0 and target_time > deadline + 1e-12:
+            break
+
+        while True:
+            remaining = target_time - time.perf_counter()
+            if remaining <= 0:
+                break
+            if remaining > 0.002:
+                time.sleep(remaining - 0.001)
+
+        current, v_meas = sample_callback()
+        timestamp = time.perf_counter() - t0
+        record = _measurement_record(timestamp, voltage, current, v_meas)
+        record["plot_x"] = timestamp
+        record["plot_x_label"] = "Time (s)"
+        records.append(record)
+        pending.append(record)
+        if len(pending) >= stream_chunk:
+            _emit_progress_chunk(progress_callback, pending, label=label)
+            pending = []
+
+        sample_index += 1
+
+    if pending:
+        _emit_progress_chunk(progress_callback, pending, label=label)
+
+    return records
+
 class KeysightSMU():
     
     def __init__(self, device_no, address=None, switch=None, switch_channel=None, connect_switch=False):
@@ -316,6 +378,66 @@ class KeysightSMU():
         finally:
             if smu is not None:
                 smu.close()
+
+    def constant_voltage_current_probe(
+        self,
+        voltage,
+        duration,
+        sample_interval=0.1,
+        compliance=1e-3,
+        adr=None,
+        current_autorange=False,
+        progress_callback=None,
+        stream_chunk=25,
+    ):
+        if compliance is None or float(compliance) <= 0:
+            raise ValueError("compliance must be > 0")
+
+        self.connect_switch_path()
+        smu = None
+        try:
+            smu = self._open_resource(adr=adr, timeout=max(10000, int((float(duration) + 5) * 1000)))
+            smu.write("*RST")
+            smu.write("*CLS")
+            smu.write("SOUR:FUNC VOLT")
+            smu.write('SENS:FUNC "CURR"')
+            smu.write(f"SOUR:VOLT {float(voltage)}")
+            smu.write(f"SENS:CURR:PROT {float(compliance)}")
+            if current_autorange:
+                smu.write(":SENS:CURR:RANG:AUTO ON")
+            else:
+                smu.write(":SENS:CURR:RANG:AUTO OFF")
+                smu.write(f":SENS:CURR:RANG {max(1e-9, float(compliance) * 10)}")
+            smu.write(":FORM:ELEM VOLT,CURR")
+            smu.write(":OUTP ON")
+
+            def sample_once():
+                response = [part.strip() for part in smu.query("READ?").strip().split(",") if part.strip()]
+                if len(response) >= 2:
+                    return float(response[1]), float(response[0])
+                if len(response) == 1:
+                    return float(response[0]), np.nan
+                return np.nan, np.nan
+
+            return _run_constant_voltage_probe_loop(
+                voltage=float(voltage),
+                duration=float(duration),
+                sample_interval=float(sample_interval),
+                sample_callback=sample_once,
+                progress_callback=progress_callback,
+                label="Current Probe",
+                stream_chunk=stream_chunk,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Keysight constant_voltage_current_probe failed: {type(e).__name__}: {e}") from e
+        finally:
+            try:
+                if smu is not None:
+                    smu.write(":OUTP OFF")
+                    smu.close()
+            except Exception:
+                pass
+            self.disconnect_switch_path()
 
             
     def get_contact_current(self, voltage, compliance=10e-6, adr=None):
@@ -1582,6 +1704,65 @@ class KeithleySMU():
             self.smu.write(":OUTP OFF")
         except Exception:
             pass
+
+    def constant_voltage_current_probe(
+        self,
+        voltage,
+        duration,
+        sample_interval=0.1,
+        compliance=1e-3,
+        adr=None,
+        current_autorange=False,
+        progress_callback=None,
+        stream_chunk=25,
+    ):
+        if compliance is None or float(compliance) <= 0:
+            raise ValueError("compliance must be > 0")
+
+        self.connect_switch_path()
+        try:
+            self.smu.write("*RST")
+            self.smu.write("*CLS")
+            self.smu.write(":ROUT:TERM REAR")
+            self.smu.apply_voltage()
+            self.smu.measure_current()
+            self.smu.compliance_current = float(compliance)
+            self.smu.write(f":SENS:CURR:PROT {float(compliance)}")
+            if current_autorange:
+                self.smu.write(":SENS:CURR:RANG:AUTO ON")
+            else:
+                self.smu.write(":SENS:CURR:RANG:AUTO OFF")
+                self.smu.current_range = max(1e-9, float(compliance) * 10)
+            self.smu.write(":SENS:CURR:NPLC 0.01")
+            self.smu.write(":FORM:ELEM VOLT,CURR")
+            self.smu.write(f":SOUR:VOLT:LEV {float(voltage)}")
+            self.smu.write(":OUTP ON")
+
+            def sample_once():
+                response = [part.strip() for part in self.smu.ask(":READ?").strip().split(",") if part.strip()]
+                if len(response) >= 2:
+                    return float(response[1]), float(response[0])
+                if len(response) == 1:
+                    return float(response[0]), np.nan
+                return np.nan, np.nan
+
+            return _run_constant_voltage_probe_loop(
+                voltage=float(voltage),
+                duration=float(duration),
+                sample_interval=float(sample_interval),
+                sample_callback=sample_once,
+                progress_callback=progress_callback,
+                label="Current Probe",
+                stream_chunk=stream_chunk,
+            )
+        except Exception as e:
+            raise RuntimeError(f"Keithley constant_voltage_current_probe failed: {type(e).__name__}: {e}") from e
+        finally:
+            try:
+                self.smu.write(":OUTP OFF")
+            except Exception:
+                pass
+            self.disconnect_switch_path()
         
         
     #------------------------- Quick probe -------------------------

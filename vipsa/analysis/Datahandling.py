@@ -342,6 +342,34 @@ class Data_Handler():
         figure.tight_layout()
         return figure
 
+    def _build_current_probe_figure(self, df, sample_id="NA", device_id="NA", managed=True):
+        data = df.copy()
+        data["Time(T)"] = pd.to_numeric(data["Time(T)"], errors="coerce")
+        data["Current (A)"] = pd.to_numeric(data["Current (A)"], errors="coerce").abs()
+        data["Voltage (V)"] = pd.to_numeric(data["Voltage (V)"], errors="coerce")
+
+        figure, axis = self._create_figure(figsize=(10, 4), dpi=150, managed=managed)
+        axis.plot(
+            data["Time(T)"],
+            data["Current (A)"],
+            color="#0d6efd",
+            linewidth=1.4,
+            marker="o",
+            markersize=2.5,
+        )
+        probe_voltage = data["Voltage (V)"].dropna().iloc[0] if not data["Voltage (V)"].dropna().empty else np.nan
+        axis.set_xlabel("Time (s)")
+        axis.set_ylabel("Current (A)")
+        axis.set_yscale("log")
+        axis.set_title(
+            f"Constant Voltage Current Probe | Sample {sample_id} | Device {device_id} | V = {probe_voltage:.4g} V"
+            if not pd.isna(probe_voltage)
+            else f"Constant Voltage Current Probe | Sample {sample_id} | Device {device_id}"
+        )
+        axis.grid(True, which="both", ls="-", alpha=0.5)
+        figure.tight_layout()
+        return figure
+
     def build_measurement_figure(self, csvpath, data_name=None, sample_id="NA", device_id="NA", managed=True):
         df = self._load_measurement_frame(csvpath)
         plot_kind = (data_name or self._infer_plot_kind(csvpath)).lower()
@@ -349,6 +377,8 @@ class Data_Handler():
             return self._build_pulse_figure(df, sample_id=sample_id, device_id=device_id, managed=managed)
         if plot_kind == "resistance":
             return self._build_resistance_figure(df, sample_id=sample_id, device_id=device_id, managed=managed)
+        if plot_kind in {"currentprobe", "current_probe", "cv_current_probe"}:
+            return self._build_current_probe_figure(df, sample_id=sample_id, device_id=device_id, managed=managed)
         return self._build_sweep_figure(df, sample_id=sample_id, device_id=device_id, managed=managed)
 
     def save_run_artifacts(self, csv_path, figure_or_plot_widget=None, metadata=None):
@@ -703,6 +733,10 @@ class Data_Handler():
 
     def show_pulse(self, csvpath, sample_id="NA", device_id="NA"):
         self.build_measurement_figure(csvpath, data_name="Pulse", sample_id=sample_id, device_id=device_id)
+        plt.show()
+
+    def show_current_probe(self, csvpath, sample_id="NA", device_id="NA"):
+        self.build_measurement_figure(csvpath, data_name="CurrentProbe", sample_id=sample_id, device_id=device_id)
         plt.show()
             
     def fold_pos_cycle(self, cycle_df):

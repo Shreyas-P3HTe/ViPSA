@@ -39,6 +39,19 @@ class ProtocolStepEditor:
                 'set_acquire_delay': 0.0005,
             }
         },
+        'CV_CURRENT_PROBE': {
+            'display_name': 'Constant Voltage Current Probe',
+            'params': {
+                'voltage': 0.1,
+                'duration': 1.0,
+                'sample_interval': 0.1,
+                'compliance': 0.001,
+                'align': False,
+                'approach': False,
+                'smu_select': 'Keithley2450',
+                'current_autorange': False,
+            }
+        },
         'ALIGN': {
             'display_name': 'Correct Course (Align)',
             'params': {
@@ -349,7 +362,7 @@ class ProtocolStepEditor:
                 return v
 
         try:
-            if step_type in ('DCIV', 'PULSE'):
+            if step_type in ('DCIV', 'PULSE', 'CV_CURRENT_PROBE'):
                 # Validate numeric ranges
                 if step_type == 'DCIV':
                     if num(params.get('pos_compl', 0)) <= 0 or num(params.get('neg_compl', 0)) <= 0:
@@ -360,6 +373,15 @@ class ProtocolStepEditor:
                     if num(params.get('compliance', 0)) <= 0:
                         return False
                     if num(params.get('pulse_width', 0)) <= 0:
+                        return False
+                if step_type == 'CV_CURRENT_PROBE':
+                    if num(params.get('voltage', 0)) != num(params.get('voltage', 0)):
+                        return False
+                    if num(params.get('compliance', 0)) <= 0:
+                        return False
+                    if num(params.get('duration', 0)) < 0:
+                        return False
+                    if num(params.get('sample_interval', 0)) <= 0:
                         return False
 
             elif step_type == 'APPROACH':
@@ -427,6 +449,11 @@ class ProtocolBuilder:
             elif step_type == 'PULSE':
                 summary_parts.append(f"[Compliance: {params.get('compliance')} A]")
                 summary_parts.append(f"[Width: {params.get('pulse_width')} s]")
+
+            elif step_type == 'CV_CURRENT_PROBE':
+                summary_parts.append(f"[V: {params.get('voltage')} V]")
+                summary_parts.append(f"[T: {params.get('duration')} s]")
+                summary_parts.append(f"[dt: {params.get('sample_interval')} s]")
             
             elif step_type == 'APPROACH':
                 summary_parts.append(f"[Threshold: {params.get('lower_threshold')}-{params.get('upper_threshold')}]")

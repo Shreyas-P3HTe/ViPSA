@@ -12,6 +12,7 @@ if PACKAGE_ROOT not in sys.path:
 
 from vipsa.analysis.Datahandling import Data_Handler
 from vipsa.analysis.sweep_generation import generate_voltage_data
+from vipsa.workflows.Main4 import Vipsa_Methods
 
 
 class SweepGenerationTests(unittest.TestCase):
@@ -116,6 +117,91 @@ class ArtifactSaveTests(unittest.TestCase):
             with open(f"{base_path}.metadata.json", "r", encoding="utf-8") as handle:
                 metadata = json.load(handle)
             self.assertEqual(metadata["test_case"], "artifact_save")
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+    def test_current_probe_workflow_saves_time_series_and_metadata(self):
+        class FakeStage:
+            def get_current_position(self):
+                return (0.0, 0.0, 9.5)
+
+        class FakeSMU:
+            def get_address(self):
+                return "SIM::TEST"
+
+            def get_contact_current(self, voltage, compliance=10e-6, adr=None):
+                return abs(float(voltage)) * 1e-6 + 1e-9
+
+            def constant_voltage_current_probe(
+                self,
+                voltage,
+                duration,
+                sample_interval=0.1,
+                compliance=1e-3,
+                adr=None,
+                current_autorange=False,
+                progress_callback=None,
+                stream_chunk=25,
+            ):
+                records = []
+                for idx in range(int(round(duration / sample_interval)) + 1):
+                    timestamp = round(idx * sample_interval, 6)
+                    record = {
+                        "Time(T)": timestamp,
+                        "Voltage (V)": float(voltage),
+                        "Current (A)": 1e-9 + (idx * 2e-9),
+                        "V_cmd (V)": float(voltage),
+                        "V_meas (V)": float(voltage) * 0.999,
+                        "V_error (V)": float(voltage) * -0.001,
+                        "Cycle Number": 1,
+                        "plot_x": timestamp,
+                        "plot_x_label": "Time (s)",
+                    }
+                    records.append(record)
+                if callable(progress_callback):
+                    progress_callback(records, label="Current Probe")
+                return records
+
+        handler = Vipsa_Methods()
+        tmpdir = os.path.join(PACKAGE_ROOT, "tests_artifacts_tmp")
+        os.makedirs(tmpdir, exist_ok=True)
+        progress_chunks = []
+
+        try:
+            measured, height, saved_path = handler.run_constant_voltage_current_probe(
+                sample_no="sample_probe",
+                device_no="device_probe",
+                voltage=0.2,
+                duration=0.3,
+                compliance=1e-3,
+                sample_interval=0.1,
+                plot=False,
+                align=False,
+                approach=False,
+                save_directory=tmpdir,
+                SMU=FakeSMU(),
+                stage=FakeStage(),
+                progress_callback=lambda chunk, label=None: progress_chunks.append((label, list(chunk))),
+            )
+
+            self.assertTrue(measured)
+            self.assertAlmostEqual(height, 9.5)
+            self.assertTrue(os.path.exists(saved_path))
+            self.assertTrue(os.path.exists(saved_path.replace(".csv", ".png")))
+            self.assertTrue(os.path.exists(saved_path.replace(".csv", ".metadata.json")))
+
+            df = pd.read_csv(saved_path)
+            self.assertEqual(list(df["Time(T)"]), [0.0, 0.1, 0.2, 0.3])
+            self.assertTrue((df["Voltage (V)"] == 0.2).all())
+
+            with open(saved_path.replace(".csv", ".metadata.json"), "r", encoding="utf-8") as handle:
+                metadata = json.load(handle)
+            self.assertEqual(metadata["data_name"], "CurrentProbe")
+            self.assertEqual(metadata["measurement_parameters"]["duration_s"], 0.3)
+            self.assertEqual(metadata["measurement_parameters"]["sample_interval_s"], 0.1)
+
+            self.assertEqual(progress_chunks[0][0], "Current Probe")
+            self.assertEqual(len(progress_chunks[0][1]), 4)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 

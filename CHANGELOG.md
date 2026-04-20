@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-04-20
+
+### Current-probe measurement updates
+- Added a new `CV_CURRENT_PROBE` measurement mode for applying a constant voltage over a fixed duration while sampling the resulting current over time.
+- Added `constant_voltage_current_probe` support to both the Keysight and Keithley SMU wrappers so the new mode shares the same high-level API across mixed-SMU workflows.
+- Added `run_constant_voltage_current_probe` to `Main4.py` and `run_single_current_probe` to `Main_crossbar.py` so the new mode can run through both the standalone and crossbar workflow layers.
+- Added `CurrentProbe` artifact handling to `Datahandling.py`, including CSV normalization, metadata sidecars, saved plot generation, and a dedicated current-versus-time figure path.
+
+### GUI and protocol updates
+- Extended both protocol editors so `CV_CURRENT_PROBE` is available as a first-class protocol step with voltage, duration, sample-interval, compliance, SMU selection, and autorange controls.
+- Added direct current-probe controls to the tkinter standalone SMU and crossbar GUIs.
+- Added crossbar grid-action support for the new current-probe mode.
+- Updated tkinter live-plot handling so streamed progress rows can switch the x-axis to time-based plotting for current-probe runs while preserving the existing voltage-based plotting for DCIV and pulse modes.
+
+### Cleanup and verification
+- Cleaned up the current-probe workflow wiring so progress callbacks now flow correctly through the main workflow and standalone GUI paths.
+- Added a regression test covering the fake-SMU current-probe workflow, including saved CSV, PNG, metadata, and progress-callback behavior.
+- Verified the touched modules with `compileall` and ran `python -m unittest tests.test_sweep_generation`, including the new current-probe regression coverage.
+- Ran a local mock end-to-end simulation of the new current-probe mode through the direct workflow, protocol execution path, and crossbar wrapper without requiring attached hardware.
+
 ## 2026-04-18
 
 ### Merge and save-path fixes

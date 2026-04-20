@@ -1471,8 +1471,9 @@ class VipsaGUI:
             font=("Segoe UI", 9),
         )
 
-    def _reset_live_plot(self, title="Live Sweep"):
+    def _reset_live_plot(self, title="Live Sweep", x_label="Voltage (V)"):
         self.live_plot_title = title
+        self.live_plot_x_label = x_label
         self.live_plot_points = []
         axis = getattr(self, "live_plot_axis", None)
         line = getattr(self, "live_plot_line", None)
@@ -1482,7 +1483,7 @@ class VipsaGUI:
         axis.clear()
         axis.set_facecolor(PANEL_COLOR)
         axis.set_title(self.live_plot_title, color=TEXT_COLOR, fontsize=10)
-        axis.set_xlabel("Voltage (V)", color=TEXT_COLOR)
+        axis.set_xlabel(x_label, color=TEXT_COLOR)
         axis.set_ylabel("|Current| (A)", color=TEXT_COLOR)
         axis.set_yscale("log")
         axis.tick_params(colors=TEXT_COLOR, labelsize=8)
@@ -1504,14 +1505,21 @@ class VipsaGUI:
             return
 
         def update():
+            x_label = rows[0].get("plot_x_label") if isinstance(rows[0], dict) else None
             if label and label != self.live_plot_title:
-                self._reset_live_plot(label)
+                self._reset_live_plot(label, x_label=x_label or "Voltage (V)")
+            elif x_label and x_label != getattr(self, "live_plot_x_label", "Voltage (V)"):
+                self._reset_live_plot(label or self.live_plot_title, x_label=x_label)
 
             for row in rows:
-                if len(row) < 3:
-                    continue
-                voltage = float(row[1])
-                current = abs(float(row[2]))
+                if isinstance(row, dict):
+                    voltage = float(row.get("plot_x", row.get("V_cmd (V)", row.get("Voltage (V)", 0.0))))
+                    current = abs(float(row.get("Current (A)", row.get("current", 0.0))))
+                else:
+                    if len(row) < 3:
+                        continue
+                    voltage = float(row[1])
+                    current = abs(float(row[2]))
                 self.live_plot_points.append((voltage, max(current, 1e-15)))
 
             if not self.live_plot_points:

@@ -449,6 +449,89 @@ class Crossbar_Methods():
              # self.smu.send_command(':OUTP2 OFF') # Turn off channel 2
              pass
 
+    def run_single_current_probe(
+        self,
+        ch1,
+        ch2,
+        voltage,
+        duration,
+        compliance,
+        sample_interval=0.1,
+        plot=True,
+        save=True,
+        save_dir=None,
+        current_autorange=False,
+        progress_callback=None,
+    ):
+        """Runs a constant-voltage current probe on the specified channels."""
+        if not self.smu or not self.is_smu_connected:
+            print("Error: SMU not connected.")
+            return None, None
+        if not self.mux or not self.is_mux_connected:
+            print("Error: Multiplexer not connected.")
+            return None, None
+
+        print(f"Running current probe for CH1: {ch1}, CH2: {ch2}")
+
+        if not self.switch_channels(ch1, ch2):
+            print("Failed to switch channels. Aborting measurement.")
+            return None, None
+
+        smu_address = self.smu.get_address()
+        try:
+            probe_data = self._call_with_supported_kwargs(
+                self.smu.constant_voltage_current_probe,
+                voltage=voltage,
+                duration=duration,
+                sample_interval=sample_interval,
+                compliance=compliance,
+                adr=smu_address,
+                current_autorange=current_autorange,
+                progress_callback=progress_callback,
+            )
+
+            if probe_data is not None and len(probe_data) > 0:
+                print("Current probe measurement successful.")
+                saved_file_probe = None
+                if save:
+                    if save_dir is None:
+                        save_dir = DEFAULT_SAVE_DIRECTORY
+                    device_id = f"{ch1}-{ch2}"
+                    probe_metadata = self._build_measurement_metadata(
+                        "CurrentProbe",
+                        device_id,
+                        {
+                            "voltage_v": voltage,
+                            "duration_s": duration,
+                            "sample_interval_s": sample_interval,
+                            "compliance_a": compliance,
+                            "current_autorange": current_autorange,
+                            "mux_channels": {"ch1": ch1, "ch2": ch2},
+                        },
+                    )
+                    saved_file_probe = self.data_handler.save_file(
+                        probe_data,
+                        "CurrentProbe",
+                        "crossbar",
+                        device_id,
+                        0,
+                        0,
+                        save_directory=save_dir,
+                        metadata=probe_metadata,
+                    )
+
+                    if plot and saved_file_probe:
+                        self.data_handler.show_current_probe(saved_file_probe, "crossbar", device_id)
+
+                return probe_data, saved_file_probe
+
+            print("Current probe measurement failed or returned no data.")
+            return None, None
+
+        except Exception as e:
+            print(f"Error during current probe measurement: {e}")
+            return None, None
+
 
     def run_light_test(self, ch1, ch2, read_voltage, compliance, delay_s):
         """Measures current under illumination at intervals."""
@@ -567,6 +650,19 @@ class Crossbar_Methods():
                         plot=params.get('plot', False),
                         save=True,
                         save_dir=device_save_dir
+                     )
+                elif test_type == 'CV_CURRENT_PROBE':
+                     self.run_single_current_probe(
+                        ch1,
+                        ch2,
+                        voltage=params.get('voltage', 0.1),
+                        duration=params.get('duration', 1.0),
+                        compliance=params.get('compliance', 1e-3),
+                        sample_interval=params.get('sample_interval', 0.1),
+                        plot=params.get('plot', False),
+                        save=True,
+                        save_dir=device_save_dir,
+                        current_autorange=params.get('current_autorange', False),
                      )
                 elif test_type == 'OPTIMIZE_PULSE':
                      # Initial params might come from the protocol definition or a previous step

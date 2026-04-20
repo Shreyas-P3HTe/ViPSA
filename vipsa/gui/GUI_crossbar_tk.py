@@ -121,6 +121,7 @@ class CrossbarTkApp:
         ttk.Separator(right, orient="horizontal").pack(fill="x", pady=8)
         ttk.Radiobutton(right, text="Run DCIV", variable=self._string_var("GRID_ACTION", "DCIV"), value="DCIV").pack(anchor="w")
         ttk.Radiobutton(right, text="Run Pulse", variable=self._string_var("GRID_ACTION", "DCIV"), value="PULSE").pack(anchor="w")
+        ttk.Radiobutton(right, text="Run Current Probe", variable=self._string_var("GRID_ACTION", "DCIV"), value="CV_CURRENT_PROBE").pack(anchor="w")
         ttk.Radiobutton(right, text="Run Protocol", variable=self._string_var("GRID_ACTION", "DCIV"), value="PROTOCOL").pack(anchor="w")
         ttk.Button(right, text="Measure Selected Devices", command=self.queue_measure_selected).pack(fill="x", pady=(12, 0))
 
@@ -184,6 +185,15 @@ class CrossbarTkApp:
         ttk.Checkbutton(pulse, text="Use Current Autorange", variable=self._bool_var("PULSE_AUTORANGE", False)).grid(row=2, column=0, sticky="w", pady=(6, 0))
         ttk.Button(pulse, text="Run Single Pulse", command=self.queue_run_single_pulse).grid(row=3, column=0, sticky="w", pady=(8, 0))
 
+        probe = ttk.LabelFrame(frame, text="Constant Voltage Current Probe", padding=10)
+        probe.pack(fill="x", pady=(10, 0))
+        self._add_entry(probe, "Voltage (V)", "PROBE_VOLTAGE", "0.1", 0, 0)
+        self._add_entry(probe, "Duration (s)", "PROBE_DURATION", "1.0", 0, 2)
+        self._add_entry(probe, "Sample Interval (s)", "PROBE_INTERVAL", "0.1", 1, 0)
+        self._add_entry(probe, "Compliance (A)", "PROBE_COMP", "0.001", 1, 2)
+        ttk.Checkbutton(probe, text="Use Current Autorange", variable=self._bool_var("PROBE_AUTORANGE", False)).grid(row=2, column=0, sticky="w", pady=(6, 0))
+        ttk.Button(probe, text="Run Current Probe", command=self.queue_run_single_current_probe).grid(row=3, column=0, sticky="w", pady=(8, 0))
+
     def _create_protocol_tab(self):
         frame = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(frame, text="Protocol")
@@ -243,12 +253,13 @@ class CrossbarTkApp:
         if path:
             self._string_var(key).set(path)
 
-    def _reset_live_plot(self, title):
+    def _reset_live_plot(self, title, x_label="Voltage (V)"):
         self.live_plot_title = title
+        self.live_plot_x_label = x_label
         self.live_plot_points = []
         self.live_plot_axis.clear()
         self.live_plot_axis.set_title(title)
-        self.live_plot_axis.set_xlabel("Voltage (V)")
+        self.live_plot_axis.set_xlabel(x_label)
         self.live_plot_axis.set_ylabel("|Current| (A)")
         self.live_plot_axis.set_yscale("log")
         self.live_plot_axis.grid(True, alpha=0.4)
@@ -260,11 +271,17 @@ class CrossbarTkApp:
         self.root.after(0, lambda: self._apply_live_plot_chunk(chunk, label))
 
     def _apply_live_plot_chunk(self, chunk, label=None):
+        items = list(chunk or [])
+        x_label = None
+        if items and isinstance(items[0], dict):
+            x_label = items[0].get("plot_x_label")
         if label and label != self.live_plot_title:
-            self._reset_live_plot(label)
-        for item in chunk or []:
+            self._reset_live_plot(label, x_label=x_label or "Voltage (V)")
+        elif x_label and x_label != getattr(self, "live_plot_x_label", "Voltage (V)"):
+            self._reset_live_plot(label or self.live_plot_title, x_label=x_label)
+        for item in items:
             if isinstance(item, dict):
-                voltage = float(item.get("voltage", item.get("V_cmd (V)", item.get("Voltage (V)", 0.0))))
+                voltage = float(item.get("plot_x", item.get("voltage", item.get("V_cmd (V)", item.get("Voltage (V)", 0.0)))))
                 current = abs(float(item.get("current", item.get("Current (A)", 0.0))))
             else:
                 voltage = float(item[1])
@@ -503,6 +520,33 @@ class CrossbarTkApp:
         else:
             self._log("Pulse run did not save data.\n")
 
+    def queue_run_single_current_probe(self):
+        self._run_in_background("Current Probe", self._run_single_current_probe)
+
+    def _run_single_current_probe(self):
+        ch1 = int(float(self._string_var("CH1").get()))
+        ch2 = int(float(self._string_var("CH2").get()))
+        self.root.after(0, lambda: self._reset_live_plot("Current Probe", x_label="Time (s)"))
+        probe_data, saved_path = self.crossbar.run_single_current_probe(
+            ch1,
+            ch2,
+            voltage=float(self._string_var("PROBE_VOLTAGE").get()),
+            duration=float(self._string_var("PROBE_DURATION").get()),
+            compliance=float(self._string_var("PROBE_COMP").get()),
+            sample_interval=float(self._string_var("PROBE_INTERVAL").get()),
+            plot=False,
+            save=True,
+            save_dir=self._string_var("SAVE_FOLDER").get(),
+            current_autorange=self._bool_var("PROBE_AUTORANGE").get(),
+            progress_callback=self._live_plot_callback,
+        )
+        if saved_path:
+            self._augment_saved_metadata(saved_path, {"ch1": ch1, "ch2": ch2})
+            self.root.after(0, lambda: self._plot_saved_csv(saved_path, "CurrentProbe"))
+            self._log(f"Saved current probe data to {saved_path}\n")
+        else:
+            self._log("Current probe run did not save data.\n")
+
     def queue_measure_selected(self):
         selected = self._get_selected_devices()
         if not selected:
@@ -551,6 +595,22 @@ class CrossbarTkApp:
                 )
                 if saved_path:
                     self._augment_saved_metadata(saved_path, {"ch1": ch1, "ch2": ch2})
+            elif action == "CV_CURRENT_PROBE":
+                _, saved_path = self.crossbar.run_single_current_probe(
+                    ch1,
+                    ch2,
+                    voltage=float(self._string_var("PROBE_VOLTAGE").get()),
+                    duration=float(self._string_var("PROBE_DURATION").get()),
+                    compliance=float(self._string_var("PROBE_COMP").get()),
+                    sample_interval=float(self._string_var("PROBE_INTERVAL").get()),
+                    plot=False,
+                    save=True,
+                    save_dir=os.path.join(save_dir, f"device_{ch1}-{ch2}"),
+                    current_autorange=self._bool_var("PROBE_AUTORANGE").get(),
+                    progress_callback=self._live_plot_callback,
+                )
+                if saved_path:
+                    self._augment_saved_metadata(saved_path, {"ch1": ch1, "ch2": ch2})
             else:
                 self._run_protocol_for_device(ch1, ch2, os.path.join(save_dir, f"device_{ch1}-{ch2}"))
             time.sleep(0.1)
@@ -592,6 +652,22 @@ class CrossbarTkApp:
                     save_dir=save_dir,
                     set_acquire_delay=params.get("set_acquire_delay"),
                     current_autorange=bool(params.get("current_autorange", False)),
+                )
+                if saved_path:
+                    self._augment_saved_metadata(saved_path, {"ch1": ch1, "ch2": ch2})
+            elif step_type == "CV_CURRENT_PROBE":
+                _, saved_path = self.crossbar.run_single_current_probe(
+                    ch1,
+                    ch2,
+                    voltage=float(params.get("voltage", 0.1)),
+                    duration=float(params.get("duration", 1.0)),
+                    compliance=float(params.get("compliance", 0.001)),
+                    sample_interval=float(params.get("sample_interval", 0.1)),
+                    plot=False,
+                    save=True,
+                    save_dir=save_dir,
+                    current_autorange=bool(params.get("current_autorange", False)),
+                    progress_callback=self._live_plot_callback,
                 )
                 if saved_path:
                     self._augment_saved_metadata(saved_path, {"ch1": ch1, "ch2": ch2})

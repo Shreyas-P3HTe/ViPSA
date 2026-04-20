@@ -205,6 +205,18 @@ class Vipsa_Methods():
         except Exception:
             return False
 
+    @staticmethod
+    def _safe_stage_height(stage):
+        if stage is None:
+            return np.nan
+        try:
+            position = stage.get_current_position()
+            if isinstance(position, (list, tuple)) and len(position) >= 3:
+                return position[2]
+        except Exception:
+            pass
+        return np.nan
+
     
     def detect_contact_and_move_z(self, SMU=None, stage=None, 
                                   step_size=1, test_voltage=0.1, 
@@ -989,6 +1001,142 @@ class Vipsa_Methods():
             saved_file_p = None
             
         return is_measured, height, saved_file_p
+
+    def run_constant_voltage_current_probe(
+        self,
+        sample_no,
+        device_no,
+        voltage,
+        duration,
+        compliance,
+        sample_interval=0.1,
+        step_no=None,
+        plot=True,
+        align=True,
+        approach=True,
+        zaber_corr=True,
+        corr_recheck=True,
+        step_size=0.5,
+        test_voltage=0.1,
+        lower_threshold=1e-11,
+        upper_threshold=5e-11,
+        max_attempts=50,
+        delay=1,
+        save_directory=None,
+        SMU=None,
+        stage=None,
+        Zaber_x=None,
+        Zaber_y=None,
+        top_light=None,
+        abort_requested=None,
+        current_autorange=False,
+        progress_callback=None,
+        protocol_context=None,
+    ):
+        if SMU == None:
+            SMU = self.SMU
+
+        if save_directory == None:
+            save_directory = self.save_directory
+
+        if stage == None:
+            stage = getattr(self, "stage", None)
+
+        if Zaber_x == None and Zaber_y == None:
+            Zaber_x = getattr(self, "zaber_x", None)
+            Zaber_y = getattr(self, "zaber_y", None)
+
+        if top_light == None:
+            top_light = getattr(self, "top_light", None)
+
+        Data_Handler = dh.Data_Handler()
+        SMU_adress = SMU.get_address()
+        height = self._safe_stage_height(stage)
+
+        if self._abort_requested(abort_requested):
+            print("Abort requested before current probe measurement started.")
+            return False, height, None
+
+        if align:
+            self.correct_course(
+                move=True,
+                zaber_corr=zaber_corr,
+                recheck=corr_recheck,
+                Zaber_x=Zaber_x,
+                Zaber_y=Zaber_y,
+                stage=stage,
+                top_light=top_light,
+            )
+            height = self._safe_stage_height(stage)
+
+        if self._abort_requested(abort_requested):
+            print("Abort requested after alignment and before current probe approach.")
+            return False, height, None
+
+        if approach:
+            contact, cont_current, height = self.detect_contact_and_move_z(
+                SMU=SMU,
+                stage=stage,
+                step_size=step_size,
+                test_voltage=test_voltage,
+                lower_threshold=lower_threshold,
+                upper_threshold=upper_threshold,
+                max_attempts=max_attempts,
+                delay=delay,
+                abort_requested=abort_requested,
+            )
+        else:
+            contact = True
+            cont_current = SMU.get_contact_current(test_voltage, adr=SMU_adress)
+            height = self._safe_stage_height(stage)
+
+        if self._abort_requested(abort_requested):
+            print("Abort requested before current probe execution.")
+            return False, height, None
+
+        if not contact:
+            return False, height, None
+
+        probe_data = self._call_with_supported_kwargs(
+            SMU.constant_voltage_current_probe,
+            voltage=voltage,
+            duration=duration,
+            sample_interval=sample_interval,
+            compliance=compliance,
+            adr=SMU_adress,
+            current_autorange=current_autorange,
+            progress_callback=progress_callback,
+        )
+        probe_metadata = self._build_measurement_metadata(
+            data_name="CurrentProbe",
+            sample_no=sample_no,
+            device_no=device_no,
+            step_no=step_no,
+            SMU=SMU,
+            measurement_params={
+                "voltage_v": voltage,
+                "duration_s": duration,
+                "sample_interval_s": sample_interval,
+                "compliance_a": compliance,
+                "current_autorange": current_autorange,
+            },
+            protocol_context=protocol_context,
+        )
+        saved_file_probe = Data_Handler.save_file(
+            probe_data,
+            "CurrentProbe",
+            sample_no,
+            device_no,
+            cont_current=cont_current,
+            Z_pos=height,
+            step_no=step_no,
+            save_directory=save_directory,
+            metadata=probe_metadata,
+        )
+        if plot:
+            Data_Handler.show_current_probe(saved_file_probe, sample_no, device_no)
+
+        return True, height, saved_file_probe
             
     def measure_IV_gridwise(self, sample_ID, gridpath, pos_compl, neg_compl, sweep_delay, acq_delay = None,
                         skip_instances = 1, startpoint = 1, randomize = False,
@@ -1552,6 +1700,56 @@ class Vipsa_Methods():
                 result['status'] = 'ok'
                 result['output'] = out
 
+            elif ctype == 'CV_CURRENT_PROBE':
+                contact_group = 'grid' if runtime_profile == 'grid' else 'single_pulse'
+                voltage = float(params.get('voltage', 0.1))
+                duration = float(params.get('duration', 1.0))
+                sample_interval = float(params.get('sample_interval', 0.1))
+                compliance = float(params.get('compliance', 1e-3))
+                align = params.get('align', True)
+                approach = params.get('approach', True)
+                current_autorange = params.get('current_autorange', self._runtime_setting(runtime_settings, contact_group, 'current_autorange', False))
+                zaber_corr = params.get('zaber_corr', self._runtime_setting(runtime_settings, 'alignment', 'zaber_corr', True))
+                corr_recheck = params.get('corr_recheck', self._runtime_setting(runtime_settings, 'alignment', 'recheck', True))
+                step_size = float(params.get('step_size', self._runtime_setting(runtime_settings, contact_group, 'step_size', 0.5)))
+                test_voltage = float(params.get('test_voltage', self._runtime_setting(runtime_settings, contact_group, 'test_voltage', 0.1)))
+                lower_threshold = float(params.get('lower_threshold', self._runtime_setting(runtime_settings, contact_group, 'lower_threshold', 1e-11)))
+                upper_threshold = float(params.get('upper_threshold', self._runtime_setting(runtime_settings, contact_group, 'upper_threshold', 5e-11)))
+                max_attempts = int(params.get('max_attempts', self._runtime_setting(runtime_settings, contact_group, 'max_attempts', 50)))
+                delay = float(params.get('delay', self._runtime_setting(runtime_settings, contact_group, 'delay', 1)))
+                out = self.run_constant_voltage_current_probe(
+                    sample_no=sample_no,
+                    device_no=device_no,
+                    voltage=voltage,
+                    duration=duration,
+                    sample_interval=sample_interval,
+                    compliance=compliance,
+                    step_no=step_no,
+                    plot=False,
+                    align=align,
+                    approach=approach,
+                    zaber_corr=zaber_corr,
+                    corr_recheck=corr_recheck,
+                    step_size=step_size,
+                    test_voltage=test_voltage,
+                    lower_threshold=lower_threshold,
+                    upper_threshold=upper_threshold,
+                    max_attempts=max_attempts,
+                    delay=delay,
+                    save_directory=save_directory,
+                    SMU=selected_smu,
+                    stage=stage,
+                    Zaber_x=Zaber_x,
+                    Zaber_y=Zaber_y,
+                    top_light=top_light,
+                    abort_requested=abort_requested,
+                    current_autorange=current_autorange,
+                    progress_callback=progress_callback,
+                    protocol_context=protocol_context,
+                )
+                result['status'] = 'ok'
+                result['output'] = out
+
             elif ctype == 'ALIGN':
                 # params may include zaber_corr and recheck
                 zaber_corr = params.get('zaber_corr', self._runtime_setting(runtime_settings, 'alignment', 'zaber_corr', True))
@@ -1623,6 +1821,4 @@ class Vipsa_Methods():
 
         print("Protocol execution complete.")
         return results
-
-
 
