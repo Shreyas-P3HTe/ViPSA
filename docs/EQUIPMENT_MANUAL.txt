@@ -1,0 +1,309 @@
+ViPSA Equipment Manual
+======================
+
+This is a practical equipment manual for the ViPSA setup based on the current
+code in the clean repository. It focuses on what hardware is expected, how the
+software talks to it, and how to use it safely from the GUI.
+
+
+1. Equipment Overview
+---------------------
+
+The software expects the following equipment:
+
+1. Source Measure Unit (SMU)
+   - Supported choices in the GUI:
+     - Keithley 2450
+     - Keysight B2901B / B2901BL
+   - Used for:
+     - DCIV sweeps
+     - Pulse measurements
+     - Contact detection
+     - Resistance/current checks
+
+2. OpenFlexure / Arduino-controlled stage
+   - Used for:
+     - X/Y/Z movement
+     - Probe approach in Z
+     - Zeroing and returning to zero
+
+3. Zaber XY stage
+   - Used for:
+     - Fast XY positioning
+     - Grid stepping
+     - Alignment correction
+
+4. Top lights
+   - Used for:
+     - Illuminating the sample during camera-based alignment
+     - Status indication during connect/disconnect
+
+5. Camera
+   - Used for:
+     - Live preview in the GUI
+     - Vision overlay
+     - Alignment and contour-based positioning
+
+6. Optional multiplexer
+   - Used by crossbar-related code
+   - Not required for the main Viewfinder4_tk workflow
+
+
+2. Default Communication Settings
+---------------------------------
+
+These are the default ports and settings currently hard-coded or used by
+default in the code.
+
+Main ViPSA workflow:
+  - Arduino stage: COM5, baud 115200, scale 1
+  - Lights: COM6, baud 9600
+  - Zaber stage: COM7
+  - SMU: VISA resource index 0
+
+Multiplexer workflow:
+  - Multiplexer Arduino: COM3, baud 9600
+
+Important:
+  - If your Windows COM assignments are different, update them in the GUI or in
+    the corresponding hardware modules before running measurements.
+  - The GUI lets you edit some ports, but the backend still assumes certain
+    defaults in a few places, so keep the code and GUI values consistent.
+
+
+3. Hardware Classes In The Repository
+-------------------------------------
+
+Relevant files:
+
+  - vipsa/hardware/Source_Measure_Unit.py
+  - vipsa/hardware/Openflexture.py
+  - vipsa/hardware/Multiplexing.py
+  - vipsa/workflows/Main4.py
+
+What each one does:
+
+  - Source_Measure_Unit.py
+    Holds the SMU drivers and VISA communication for Keysight and Keithley.
+
+  - Openflexture.py
+    Holds:
+      - stage class for the Arduino/OpenFlexure motion stage
+      - Light class for the light controller
+      - Zaber class for the Zaber XY stage
+
+  - Multiplexing.py
+    Controls the multiplexer Arduino for crossbar workflows.
+
+  - Main4.py
+    Ties all equipment together for measurement workflows, alignment, approach,
+    protocol execution, and grid measurements.
+
+
+4. What "Connect All Equipments" Does
+-------------------------------------
+
+When the main workflow connects equipment, the backend currently does the
+following in Main4.connect_equipment():
+
+  1. Connect lights
+  2. Send a rainbow light command
+  3. Connect Arduino stage on COM5
+  4. Connect Zaber on COM7
+  5. Select the requested SMU
+  6. Blink green lights to indicate success
+
+If connection fails:
+
+  - The backend tries to indicate failure with red lights
+  - The GUI reports a connection error
+
+
+5. What "Disconnect All" Does
+-----------------------------
+
+When equipment is disconnected, the backend currently does the following:
+
+  1. Move the Arduino Z stage down by -30
+  2. Disconnect the Arduino stage
+  3. Close the Zaber connections
+  4. Turn lights off and disconnect them
+
+Good practice:
+
+  - Stop any running measurement first
+  - Stop the camera before closing the app
+  - Make sure the probe is safely retracted before disconnecting
+
+
+6. Recommended Startup Order
+----------------------------
+
+Physical startup:
+
+  1. Power the SMU
+  2. Power the stage controllers
+  3. Power the lights
+  4. Connect USB/serial cables
+  5. Confirm COM ports in Windows Device Manager
+  6. Launch the GUI
+
+Software startup:
+
+  1. Open Viewfinder4_tk
+  2. Select the correct SMU type
+  3. Confirm Arduino and Zaber port settings
+  4. Click "Connect All Equipments"
+  5. Start the camera
+  6. Verify motion and lights before running measurements
+
+
+7. Recommended Shutdown Order
+-----------------------------
+
+  1. Stop any running measurement
+  2. Stop camera
+  3. Return to a safe Z position if needed
+  4. Click "Disconnect All"
+  5. Close the GUI
+  6. Power down hardware if needed
+
+
+8. Camera And Alignment
+-----------------------
+
+The camera is used for two main things:
+
+  - Live viewing in the Movement and Grid tabs
+  - Alignment via image processing
+
+Quick Align:
+  - Uses the lights and camera
+  - Captures an image
+  - Finds contours
+  - Computes offset
+  - Corrects XY position, normally through the Zaber stage
+
+Quick Approach:
+  - Uses the SMU current threshold and Arduino Z stage
+  - Moves down in small steps until electrical contact is detected
+
+Important:
+  - Alignment depends on good lighting and a clean image
+  - Approach depends on sensible voltage/current thresholds
+
+
+9. Measurement Modes
+--------------------
+
+Single Measurement tab:
+
+  - Measure Resistance
+    Quick current/resistance-style check using the SMU
+
+  - Run Single DCIV Measurement
+    Uses:
+      - sample ID
+      - device ID
+      - sweep CSV
+      - positive and negative compliance
+      - sweep delay
+      - optional align and approach
+
+  - Run Single Pulsed Measurement
+    Uses:
+      - pulse CSV
+      - compliance
+      - pulse width
+      - optional align and approach
+
+Grid Measurement tab:
+
+  - Create Grid CSV
+    Saves a CSV of device positions based on current Zaber coordinates
+
+  - Run Grid Measurement (DCIV)
+  - Run Grid Measurement (Pulse)
+  - Run Grid Measurement (Protocol)
+
+Protocol Builder tab:
+
+  - Build reusable multi-step workflows
+  - Save/load protocol JSON files
+  - Run a protocol on the current target or across a grid
+
+
+10. Files The Equipment Uses
+----------------------------
+
+Common input files:
+
+  - Sweep CSV files for DCIV
+  - Pulse CSV files for pulsed measurements
+  - Grid CSV files for array positions
+  - Protocol JSON files for multi-step workflows
+
+Make sure:
+
+  - File paths exist before running
+  - Save folders are writable
+  - Sweep/pulse files match the selected measurement type
+
+
+11. Safety Notes
+----------------
+
+  - Always verify compliance settings before contacting a device
+  - Start with conservative voltage/current settings on unknown samples
+  - Do not use aggressive approach thresholds until the setup is confirmed
+  - Make sure the probe is retracted before moving large XY distances
+  - Keep the optical path clear before running alignment
+  - If the GUI appears frozen during a run, do not immediately move hardware by hand
+
+
+12. Troubleshooting
+-------------------
+
+Problem: Equipment does not connect
+  - Check COM port numbers
+  - Check USB cables and power
+  - Confirm the selected SMU matches the physical instrument
+  - Make sure VISA drivers are installed for the SMU
+
+Problem: Camera feed is black
+  - Confirm the camera is free and not open in another application
+  - Check camera index if multiple cameras are connected
+  - Restart the camera from the GUI
+
+Problem: Zaber does not move
+  - Check COM port
+  - Confirm the Zaber devices enumerate correctly
+  - Reconnect all equipment
+
+Problem: Stage moves in the wrong amount
+  - Check the OpenFlexure scale value
+  - Confirm the current optics/zoom configuration
+
+Problem: Contact detection fails
+  - Verify probe wiring
+  - Lower the step size
+  - Check test voltage and current thresholds
+  - Confirm the SMU output path and compliance settings
+
+Problem: Lights do not respond
+  - Check COM6 availability
+  - Confirm the light controller is powered
+
+
+13. Notes For Future Maintenance
+--------------------------------
+
+Current defaults are spread across both GUI code and backend code. If the
+equipment setup changes, update both:
+
+  - Viewfinder4_tk.py
+  - Main4.py
+  - Openflexture.py
+  - Multiplexing.py
+
+This will keep the GUI defaults and backend connection logic aligned.

@@ -1,0 +1,1178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Viewfinder4 Internal Map</title>
+  <style>
+    :root {
+      --bg: #f4efe6;
+      --panel: rgba(255, 252, 246, 0.92);
+      --panel-strong: #fff8ef;
+      --ink: #27221d;
+      --muted: #756a5d;
+      --line: #d5c5b1;
+      --accent: #c46a2d;
+      --accent-soft: #f5d4bb;
+      --focus: #2f6c72;
+      --shadow: 0 18px 45px rgba(76, 49, 24, 0.12);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(196, 106, 45, 0.12), transparent 34%),
+        radial-gradient(circle at top right, rgba(47, 108, 114, 0.1), transparent 28%),
+        linear-gradient(180deg, #f9f4ec 0%, var(--bg) 100%);
+      min-height: 100vh;
+    }
+
+    .shell {
+      max-width: 1600px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .hero {
+      background: linear-gradient(135deg, rgba(255, 248, 239, 0.95), rgba(245, 212, 187, 0.75));
+      border: 1px solid rgba(196, 106, 45, 0.18);
+      border-radius: 24px;
+      padding: 24px 26px;
+      box-shadow: var(--shadow);
+      margin-bottom: 20px;
+    }
+
+    .hero h1 {
+      margin: 0 0 8px;
+      font-size: 2rem;
+      line-height: 1.1;
+    }
+
+    .hero p {
+      margin: 0;
+      color: var(--muted);
+      max-width: 960px;
+      line-height: 1.5;
+    }
+
+    .toolbar {
+      display: grid;
+      grid-template-columns: 1.5fr auto auto auto;
+      gap: 12px;
+      align-items: center;
+      margin: 18px 0 22px;
+    }
+
+    .toolbar input,
+    .toolbar button {
+      border-radius: 14px;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      color: var(--ink);
+      font-size: 0.98rem;
+      padding: 12px 14px;
+    }
+
+    .toolbar button {
+      cursor: pointer;
+      background: var(--panel-strong);
+      transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+    }
+
+    .toolbar button:hover {
+      transform: translateY(-1px);
+      border-color: var(--accent);
+      background: #fff2e6;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(320px, 440px) minmax(420px, 1fr) minmax(260px, 320px);
+      gap: 16px;
+      align-items: start;
+    }
+
+    .panel {
+      background: var(--panel);
+      border: 1px solid rgba(117, 106, 93, 0.18);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      backdrop-filter: blur(10px);
+    }
+
+    .panel-header {
+      padding: 16px 18px 10px;
+      border-bottom: 1px solid rgba(213, 197, 177, 0.6);
+    }
+
+    .panel-header h2 {
+      margin: 0 0 4px;
+      font-size: 1.05rem;
+    }
+
+    .panel-header p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 0.93rem;
+      line-height: 1.45;
+    }
+
+    .panel-body {
+      padding: 14px 16px 18px;
+      max-height: calc(100vh - 250px);
+      overflow: auto;
+    }
+
+    .module-card {
+      border: 1px solid rgba(213, 197, 177, 0.85);
+      border-radius: 18px;
+      background: rgba(255, 250, 244, 0.88);
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+
+    .module-card.active {
+      border-color: var(--focus);
+      box-shadow: 0 0 0 3px rgba(47, 108, 114, 0.12);
+    }
+
+    .module-button {
+      width: 100%;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      padding: 15px 16px;
+      cursor: pointer;
+      color: inherit;
+    }
+
+    .module-button:hover {
+      background: rgba(196, 106, 45, 0.05);
+    }
+
+    .module-name {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 5px;
+      word-break: break-word;
+    }
+
+    .module-meta {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .module-content {
+      padding: 0 16px 16px;
+      border-top: 1px solid rgba(213, 197, 177, 0.5);
+    }
+
+    details.group {
+      margin-top: 12px;
+      border: 1px solid rgba(213, 197, 177, 0.75);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, 0.65);
+      padding: 10px 12px;
+    }
+
+    details.group summary {
+      cursor: pointer;
+      font-weight: 600;
+      color: var(--focus);
+    }
+
+    ul.clean {
+      list-style: none;
+      margin: 10px 0 0;
+      padding: 0;
+    }
+
+    ul.clean li {
+      padding: 6px 0;
+      border-bottom: 1px dashed rgba(213, 197, 177, 0.8);
+      font-size: 0.95rem;
+      word-break: break-word;
+    }
+
+    ul.clean li:last-child {
+      border-bottom: 0;
+    }
+
+    .method-name,
+    .function-name {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(47, 108, 114, 0.09);
+      color: var(--focus);
+      font-family: "Consolas", "SFMono-Regular", monospace;
+      font-size: 0.9rem;
+    }
+
+    .class-name {
+      display: inline-block;
+      margin-bottom: 6px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      background: rgba(196, 106, 45, 0.12);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 0.88rem;
+    }
+
+    .graph-grid {
+      display: grid;
+      gap: 14px;
+    }
+
+    .graph-card {
+      border: 1px solid rgba(213, 197, 177, 0.85);
+      border-radius: 18px;
+      background: rgba(255, 250, 244, 0.95);
+      padding: 14px;
+    }
+
+    .graph-card h3 {
+      margin: 0 0 10px;
+      font-size: 1rem;
+    }
+
+    .dep-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin: 8px 0;
+      padding: 9px 10px;
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(213, 197, 177, 0.6);
+    }
+
+    .dep-row.highlight {
+      border-color: var(--focus);
+      background: rgba(47, 108, 114, 0.09);
+    }
+
+    .node-pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(117, 106, 93, 0.2);
+      background: rgba(255, 252, 246, 0.95);
+      font-size: 0.9rem;
+      cursor: pointer;
+      word-break: break-word;
+    }
+
+    .node-pill:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .arrow {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .mini-list {
+      display: grid;
+      gap: 10px;
+    }
+
+    .mini-block {
+      border: 1px solid rgba(213, 197, 177, 0.8);
+      border-radius: 16px;
+      background: rgba(255, 250, 244, 0.95);
+      padding: 12px;
+    }
+
+    .mini-block h3 {
+      margin: 0 0 8px;
+      font-size: 0.96rem;
+    }
+
+    .empty {
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .stat {
+      background: rgba(255, 255, 255, 0.6);
+      border: 1px solid rgba(213, 197, 177, 0.8);
+      border-radius: 16px;
+      padding: 12px;
+    }
+
+    .stat strong {
+      display: block;
+      font-size: 1.25rem;
+      margin-bottom: 4px;
+    }
+
+    .stat span {
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    @media (max-width: 1200px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .panel-body {
+        max-height: none;
+      }
+
+      .toolbar {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .shell {
+        padding: 14px;
+      }
+
+      .toolbar {
+        grid-template-columns: 1fr;
+      }
+
+      .stats {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <h1>Viewfinder4 Internal Map</h1>
+      <p>
+        Interactive explorer for the current internal `Viewfinder4_tk` code map. This view is local and static:
+        it covers only repo-defined modules, functions, classes, and methods for the current GUI dependency chain.
+      </p>
+      <div class="stats" id="stats"></div>
+    </section>
+
+    <section class="toolbar">
+      <input id="searchInput" type="search" placeholder="Search modules, classes, functions, or methods" />
+      <button id="expandAllBtn" type="button">Expand All</button>
+      <button id="collapseAllBtn" type="button">Collapse All</button>
+      <button id="clearFocusBtn" type="button">Clear Focus</button>
+    </section>
+
+    <section class="layout">
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Code Tree</h2>
+          <p>Expand modules to inspect functions, classes, and methods. Click a module name to focus its relationships.</p>
+        </div>
+        <div class="panel-body" id="treePanel"></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Dependency View</h2>
+          <p>Shows internal module-to-module links. Click any pill to jump focus to that module.</p>
+        </div>
+        <div class="panel-body">
+          <div class="graph-grid">
+            <section class="graph-card">
+              <h3>Focused Module</h3>
+              <div id="focusSummary" class="empty">Select a module to inspect its incoming and outgoing links.</div>
+            </section>
+            <section class="graph-card">
+              <h3>All Internal Dependencies</h3>
+              <div id="dependenciesPanel"></div>
+            </section>
+          </div>
+        </div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-header">
+          <h2>Quick View</h2>
+          <p>Compact summary of what the focused module defines.</p>
+        </div>
+        <div class="panel-body">
+          <div class="mini-list">
+            <section class="mini-block">
+              <h3>Functions</h3>
+              <div id="functionsSummary" class="empty">No module selected.</div>
+            </section>
+            <section class="mini-block">
+              <h3>Classes</h3>
+              <div id="classesSummary" class="empty">No module selected.</div>
+            </section>
+            <section class="mini-block">
+              <h3>Depends On</h3>
+              <div id="outgoingSummary" class="empty">No module selected.</div>
+            </section>
+            <section class="mini-block">
+              <h3>Used By</h3>
+              <div id="incomingSummary" class="empty">No module selected.</div>
+            </section>
+          </div>
+        </div>
+      </article>
+    </section>
+  </div>
+
+  <script id="mapData" type="application/json">
+{
+  "root": "vipsa.gui.Viewfinder4_tk",
+  "modules": [
+    {
+      "name": "vipsa.analysis",
+      "functions": [],
+      "classes": []
+    },
+    {
+      "name": "vipsa.analysis.Vision",
+      "functions": [
+        "overlay",
+        "draw_x_rot",
+        "start_camera",
+        "capture_image",
+        "get_thresholds",
+        "get_contours",
+        "get_contour_distances",
+        "get_contour_distances_old",
+        "detect_movement_with_crop"
+      ],
+      "classes": []
+    },
+    {
+      "name": "vipsa.gui.ProtocolEditor_tk",
+      "functions": [],
+      "classes": [
+        {
+          "name": "ProtocolStepEditorDialog",
+          "methods": [
+            "__init__",
+            "_build_ui",
+            "_browse_file",
+            "_clear_fields",
+            "_rebuild_fields",
+            "_extract_params",
+            "_validate",
+            "_save",
+            "_cancel"
+          ]
+        },
+        {
+          "name": "ProtocolBuilderTk",
+          "methods": [
+            "__init__",
+            "show_step_editor",
+            "get_protocol_display_list",
+            "export_protocol",
+            "import_protocol",
+            "clear_protocol",
+            "remove_step"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "vipsa.gui.Viewfinder4_tk",
+      "functions": [],
+      "classes": [
+        {
+          "name": "RedirectText",
+          "methods": [
+            "__init__",
+            "write",
+            "flush"
+          ]
+        },
+        {
+          "name": "ScrollableFrame",
+          "methods": [
+            "__init__"
+          ]
+        },
+        {
+          "name": "VipsaGUI",
+          "methods": [
+            "__init__",
+            "_configure_theme",
+            "_register_string",
+            "_register_bool",
+            "_get_value",
+            "_set_value",
+            "_collect_values",
+            "_append_log",
+            "_log",
+            "_set_status",
+            "_is_abort_requested",
+            "_parse_closed_channels",
+            "_get_switch_channels",
+            "_identify_route",
+            "_safe_stop_hardware",
+            "_restore_active_manual_route",
+            "_restore_arduino_stage_after_abort",
+            "_normalize_smu_label",
+            "_discover_visa_instruments",
+            "_build_smu",
+            "_disconnect_smu_object",
+            "_set_manual_active_smu",
+            "_ensure_protocol_smus",
+            "_set_task_status",
+            "_run_in_background",
+            "_choose_file",
+            "_choose_directory",
+            "_add_entry_row",
+            "_add_checkbox",
+            "_add_section",
+            "_default_runtime_settings",
+            "_merge_runtime_settings",
+            "_apply_runtime_settings_to_ui",
+            "_load_persisted_runtime_settings",
+            "_persist_runtime_settings",
+            "_restore_default_runtime_settings",
+            "_get_runtime_bool_setting",
+            "_get_runtime_float_setting",
+            "_get_runtime_int_setting",
+            "_get_runtime_contact_settings",
+            "_get_runtime_measurement_settings",
+            "_build_runtime_settings",
+            "_create_camera_block",
+            "_build_layout",
+            "_create_movement_tab",
+            "_create_settings_tab",
+            "_create_grid_tab",
+            "_create_measure_tab",
+            "_create_protocol_tab",
+            "_create_log_panel",
+            "_create_monitor_panel",
+            "_create_live_plot_panel",
+            "_schedule_monitor_refresh",
+            "on_close",
+            "_request_abort",
+            "_refresh_setup_monitor",
+            "_draw_setup_diagram",
+            "_reset_live_plot",
+            "_live_plot_callback",
+            "_require_connection",
+            "_queue_measure_resistance",
+            "_queue_single_dciv",
+            "_queue_single_pulse",
+            "_queue_grid_measurement",
+            "_queue_run_protocol_single",
+            "_queue_quick_align",
+            "_queue_quick_approach",
+            "_set_zero",
+            "_go_zero",
+            "_start_camera_thread",
+            "_stop_camera_thread",
+            "_clear_camera_feeds",
+            "_camera_loop",
+            "_update_camera_feed",
+            "_connect_all",
+            "_disconnect_all",
+            "_switch_instrument",
+            "_handle_arduino_move",
+            "_handle_zaber_move",
+            "_control_lights",
+            "_create_grid_csv",
+            "_quick_align",
+            "_quick_approach",
+            "_run_measure_resistance",
+            "_run_single_dciv_meas",
+            "_run_single_pulse_meas",
+            "_iter_grid_devices",
+            "_run_grid_measurement",
+            "_selected_protocol_index",
+            "_show_protocol_context_menu",
+            "_refresh_protocol_display",
+            "_add_protocol_step",
+            "_edit_selected_protocol_step",
+            "_remove_protocol_step",
+            "_clear_protocol",
+            "_save_protocol",
+            "_load_protocol",
+            "_run_protocol_single"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "vipsa.hardware.Openflexture",
+      "functions": [],
+      "classes": [
+        {
+          "name": "stage",
+          "methods": [
+            "__init__",
+            "flush",
+            "is_busy",
+            "change_scale",
+            "set_zero",
+            "go_to_zero",
+            "get_current_position",
+            "move_x_by",
+            "move_y_by",
+            "move_xy_by",
+            "move_xy_to",
+            "move_with_lim_by",
+            "move_z_by",
+            "move_z_infinite",
+            "abort_motion",
+            "reconnect",
+            "speak_grbl",
+            "disconnect"
+          ]
+        },
+        {
+          "name": "Light",
+          "methods": [
+            "__init__",
+            "control_lights",
+            "disconnect"
+          ]
+        },
+        {
+          "name": "Zaber",
+          "methods": [
+            "__init__",
+            "get_devices",
+            "disconnect"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "vipsa.hardware.Source_Measure_Unit",
+      "functions": [
+        "_warn_once",
+        "_measurement_record",
+        "_records_to_frame",
+        "_parse_keysight_trace"
+      ],
+      "classes": [
+        {
+          "name": "KeysightSMU",
+          "methods": [
+            "__init__",
+            "_open_resource",
+            "connect_switch_path",
+            "disconnect_switch_path",
+            "close_session",
+            "get_address",
+            "get_error",
+            "reset_device",
+            "sync",
+            "send_command",
+            "write",
+            "ask",
+            "prepare_contact_probe",
+            "stop_output",
+            "abort_measurement",
+            "get_contact_current",
+            "get_contact_current_fast",
+            "split_list",
+            "split_list_by_4",
+            "simple_IV_sweep",
+            "list_IV_sweep_manual",
+            "scan_read_vlist",
+            "list_IV_sweep_split",
+            "list_IV_sweep_split_4",
+            "pulsed_measurement",
+            "response_dealer",
+            "split_pulse_for_2_chan",
+            "general_channel_pulsing"
+          ]
+        },
+        {
+          "name": "KeithleySMU",
+          "methods": [
+            "__init__",
+            "connect_switch_path",
+            "disconnect_switch_path",
+            "close_session",
+            "get_address",
+            "reset_device",
+            "write",
+            "ask",
+            "prepare_contact_probe",
+            "stop_output",
+            "abort_measurement",
+            "get_contact_current",
+            "get_contact_current_fast",
+            "run_read_probe",
+            "identify_linear_segments",
+            "split_by_polarity",
+            "split_sweep_by_4",
+            "list_IV_sweep_split_4",
+            "run_linear_segment",
+            "list_IV_sweep_split",
+            "pulsed_measurement"
+          ]
+        },
+        {
+          "name": "Keithley707B",
+          "methods": [
+            "__init__",
+            "_open_device",
+            "build_channel",
+            "_normalize_channel",
+            "_format_channels",
+            "write_tsp",
+            "query_tsp",
+            "close_channel",
+            "open_channel",
+            "open_all",
+            "get_closed_channels",
+            "get_route_channels",
+            "connect_named_route",
+            "connect_keithley_smu",
+            "connect_keysight_smu",
+            "reset"
+          ]
+        }
+      ]
+    },
+    {
+      "name": "vipsa.workflows.Main4",
+      "functions": [],
+      "classes": [
+        {
+          "name": "Vipsa_Methods",
+          "methods": [
+            "_supports_kwarg",
+            "_call_with_supported_kwargs",
+            "_describe_smu",
+            "_build_measurement_metadata",
+            "_build_protocol_context",
+            "_runtime_setting",
+            "connect_equipment",
+            "disconnect_equipment",
+            "_abort_requested",
+            "detect_contact_and_move_z",
+            "center_pad",
+            "center_pad_zaber",
+            "correct_course",
+            "quick_run_pulse",
+            "optimize_pulse_train",
+            "extrapolate_z_positions",
+            "get_grid_z_positions",
+            "run_single_DCIV",
+            "run_resistance_measurement",
+            "run_single_pulse",
+            "measure_IV_gridwise",
+            "adaptive_testing",
+            "best_5_endurance",
+            "save_protocol",
+            "load_protocol",
+            "validate_protocol",
+            "_execute_protocol_step",
+            "run_protocol"
+          ]
+        }
+      ]
+    }
+  ],
+  "dependencies": [
+    {
+      "from": "vipsa.gui.Viewfinder4_tk",
+      "to": "vipsa.analysis.Vision"
+    },
+    {
+      "from": "vipsa.gui.Viewfinder4_tk",
+      "to": "vipsa.gui.ProtocolEditor_tk"
+    },
+    {
+      "from": "vipsa.gui.Viewfinder4_tk",
+      "to": "vipsa.hardware.Openflexture"
+    },
+    {
+      "from": "vipsa.gui.Viewfinder4_tk",
+      "to": "vipsa.hardware.Source_Measure_Unit"
+    },
+    {
+      "from": "vipsa.gui.Viewfinder4_tk",
+      "to": "vipsa.workflows.Main4"
+    },
+    {
+      "from": "vipsa.workflows.Main4",
+      "to": "vipsa.analysis"
+    },
+    {
+      "from": "vipsa.workflows.Main4",
+      "to": "vipsa.analysis.Vision"
+    },
+    {
+      "from": "vipsa.workflows.Main4",
+      "to": "vipsa.hardware.Openflexture"
+    },
+    {
+      "from": "vipsa.workflows.Main4",
+      "to": "vipsa.hardware.Source_Measure_Unit"
+    }
+  ]
+}
+  </script>
+  <script>
+    const state = {
+      data: null,
+      expanded: new Set(),
+      focusedModule: null,
+      search: ""
+    };
+
+    const treePanel = document.getElementById("treePanel");
+    const dependenciesPanel = document.getElementById("dependenciesPanel");
+    const focusSummary = document.getElementById("focusSummary");
+    const functionsSummary = document.getElementById("functionsSummary");
+    const classesSummary = document.getElementById("classesSummary");
+    const outgoingSummary = document.getElementById("outgoingSummary");
+    const incomingSummary = document.getElementById("incomingSummary");
+    const stats = document.getElementById("stats");
+    const searchInput = document.getElementById("searchInput");
+    const expandAllBtn = document.getElementById("expandAllBtn");
+    const collapseAllBtn = document.getElementById("collapseAllBtn");
+    const clearFocusBtn = document.getElementById("clearFocusBtn");
+
+    function makeStat(value, label) {
+      const div = document.createElement("div");
+      div.className = "stat";
+      const strong = document.createElement("strong");
+      strong.textContent = value;
+      const span = document.createElement("span");
+      span.textContent = label;
+      div.append(strong, span);
+      return div;
+    }
+
+    function makePill(label, onClick) {
+      const pill = document.createElement("button");
+      pill.type = "button";
+      pill.className = "node-pill";
+      pill.textContent = label;
+      pill.addEventListener("click", onClick);
+      return pill;
+    }
+
+    function moduleMatches(module) {
+      if (!state.search) return true;
+      const q = state.search.toLowerCase();
+      if (module.name.toLowerCase().includes(q)) return true;
+      if (module.functions.some((item) => item.toLowerCase().includes(q))) return true;
+      return module.classes.some((cls) => {
+        if (cls.name.toLowerCase().includes(q)) return true;
+        return cls.methods.some((method) => method.toLowerCase().includes(q));
+      });
+    }
+
+    function getModule(name) {
+      return state.data.modules.find((module) => module.name === name);
+    }
+
+    function getOutgoing(name) {
+      return state.data.dependencies.filter((dep) => dep.from === name).map((dep) => dep.to);
+    }
+
+    function getIncoming(name) {
+      return state.data.dependencies.filter((dep) => dep.to === name).map((dep) => dep.from);
+    }
+
+    function toggleModule(name) {
+      if (state.expanded.has(name)) {
+        state.expanded.delete(name);
+      } else {
+        state.expanded.add(name);
+      }
+      renderTree();
+    }
+
+    function focusModule(name) {
+      state.focusedModule = name;
+      state.expanded.add(name);
+      renderTree();
+      renderDependencyView();
+      renderQuickView();
+    }
+
+    function renderStats() {
+      stats.innerHTML = "";
+      const moduleCount = state.data.modules.length;
+      const functionCount = state.data.modules.reduce((sum, module) => sum + module.functions.length, 0);
+      const classCount = state.data.modules.reduce((sum, module) => sum + module.classes.length, 0);
+      const methodCount = state.data.modules.reduce(
+        (sum, module) => sum + module.classes.reduce((inner, cls) => inner + cls.methods.length, 0),
+        0
+      );
+      stats.append(
+        makeStat(moduleCount, "modules"),
+        makeStat(functionCount, "top-level functions"),
+        makeStat(classCount, "classes"),
+        makeStat(methodCount, "class methods")
+      );
+    }
+
+    function renderTree() {
+      treePanel.innerHTML = "";
+      const visibleModules = state.data.modules.filter(moduleMatches);
+
+      if (!visibleModules.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No modules matched the current search.";
+        treePanel.append(empty);
+        return;
+      }
+
+      visibleModules.forEach((module) => {
+        const card = document.createElement("section");
+        card.className = "module-card";
+        if (state.focusedModule === module.name) {
+          card.classList.add("active");
+        }
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "module-button";
+        button.addEventListener("click", () => focusModule(module.name));
+
+        const name = document.createElement("span");
+        name.className = "module-name";
+        name.textContent = module.name;
+
+        const methodCount = module.classes.reduce((sum, cls) => sum + cls.methods.length, 0);
+        const meta = document.createElement("span");
+        meta.className = "module-meta";
+        meta.textContent = `${module.functions.length} functions • ${module.classes.length} classes • ${methodCount} methods`;
+
+        button.append(name, meta);
+        card.append(button);
+
+        const content = document.createElement("div");
+        content.className = "module-content";
+        content.hidden = !state.expanded.has(module.name);
+
+        const toggleBtn = document.createElement("button");
+        toggleBtn.type = "button";
+        toggleBtn.className = "node-pill";
+        toggleBtn.textContent = state.expanded.has(module.name) ? "Collapse" : "Expand";
+        toggleBtn.addEventListener("click", (event) => {
+          event.stopPropagation();
+          toggleModule(module.name);
+        });
+        content.append(toggleBtn);
+
+        if (module.functions.length) {
+          const details = document.createElement("details");
+          details.className = "group";
+          details.open = true;
+          const summary = document.createElement("summary");
+          summary.textContent = `Functions (${module.functions.length})`;
+          details.append(summary);
+
+          const list = document.createElement("ul");
+          list.className = "clean";
+          module.functions
+            .filter((fn) => !state.search || fn.toLowerCase().includes(state.search.toLowerCase()) || module.name.toLowerCase().includes(state.search.toLowerCase()))
+            .forEach((fn) => {
+              const li = document.createElement("li");
+              const tag = document.createElement("span");
+              tag.className = "function-name";
+              tag.textContent = fn;
+              li.append(tag);
+              list.append(li);
+            });
+          if (list.children.length) {
+            details.append(list);
+            content.append(details);
+          }
+        }
+
+        module.classes.forEach((cls) => {
+          const classMatches =
+            !state.search ||
+            cls.name.toLowerCase().includes(state.search.toLowerCase()) ||
+            cls.methods.some((method) => method.toLowerCase().includes(state.search.toLowerCase()));
+          if (!classMatches && state.search) return;
+
+          const details = document.createElement("details");
+          details.className = "group";
+          details.open = state.focusedModule === module.name;
+
+          const summary = document.createElement("summary");
+          summary.textContent = `${cls.name} (${cls.methods.length} methods)`;
+          details.append(summary);
+
+          const chip = document.createElement("div");
+          chip.className = "class-name";
+          chip.textContent = cls.name;
+          details.append(chip);
+
+          const list = document.createElement("ul");
+          list.className = "clean";
+          cls.methods
+            .filter((method) => !state.search || method.toLowerCase().includes(state.search.toLowerCase()) || cls.name.toLowerCase().includes(state.search.toLowerCase()))
+            .forEach((method) => {
+              const li = document.createElement("li");
+              const tag = document.createElement("span");
+              tag.className = "method-name";
+              tag.textContent = method;
+              li.append(tag);
+              list.append(li);
+            });
+
+          if (list.children.length || !state.search) {
+            details.append(list);
+            content.append(details);
+          }
+        });
+
+        card.append(content);
+        treePanel.append(card);
+      });
+    }
+
+    function renderDependencyView() {
+      dependenciesPanel.innerHTML = "";
+      const deps = state.data.dependencies.filter((dep) => {
+        if (!state.search) return true;
+        const q = state.search.toLowerCase();
+        return dep.from.toLowerCase().includes(q) || dep.to.toLowerCase().includes(q);
+      });
+
+      if (!deps.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "No dependency edges matched the current search.";
+        dependenciesPanel.append(empty);
+      } else {
+        deps.forEach((dep) => {
+          const row = document.createElement("div");
+          row.className = "dep-row";
+          if (state.focusedModule && (dep.from === state.focusedModule || dep.to === state.focusedModule)) {
+            row.classList.add("highlight");
+          }
+
+          row.append(
+            makePill(dep.from, () => focusModule(dep.from)),
+            Object.assign(document.createElement("span"), { className: "arrow", textContent: "->" }),
+            makePill(dep.to, () => focusModule(dep.to))
+          );
+          dependenciesPanel.append(row);
+        });
+      }
+
+      if (!state.focusedModule) {
+        focusSummary.className = "empty";
+        focusSummary.textContent = "Select a module to inspect its incoming and outgoing links.";
+        return;
+      }
+
+      const outgoing = getOutgoing(state.focusedModule);
+      const incoming = getIncoming(state.focusedModule);
+      focusSummary.className = "";
+      focusSummary.innerHTML = `
+        <strong>${state.focusedModule}</strong><br />
+        Outgoing links: ${outgoing.length}<br />
+        Incoming links: ${incoming.length}
+      `;
+    }
+
+    function renderList(target, items, emptyText) {
+      target.innerHTML = "";
+      if (!items.length) {
+        target.className = "empty";
+        target.textContent = emptyText;
+        return;
+      }
+      target.className = "";
+      items.forEach((item) => {
+        target.append(makePill(item, () => {
+          const module = getModule(item);
+          if (module) {
+            focusModule(item);
+          }
+        }));
+      });
+    }
+
+    function renderQuickView() {
+      if (!state.focusedModule) {
+        functionsSummary.className = "empty";
+        classesSummary.className = "empty";
+        outgoingSummary.className = "empty";
+        incomingSummary.className = "empty";
+        functionsSummary.textContent = "No module selected.";
+        classesSummary.textContent = "No module selected.";
+        outgoingSummary.textContent = "No module selected.";
+        incomingSummary.textContent = "No module selected.";
+        return;
+      }
+
+      const module = getModule(state.focusedModule);
+      renderList(functionsSummary, module.functions, "No top-level functions in this module.");
+      renderList(classesSummary, module.classes.map((cls) => `${cls.name} (${cls.methods.length})`), "No classes in this module.");
+      renderList(outgoingSummary, getOutgoing(state.focusedModule), "This module does not import any tracked internal modules.");
+      renderList(incomingSummary, getIncoming(state.focusedModule), "No tracked internal modules import this module.");
+    }
+
+    function expandAll() {
+      state.data.modules.forEach((module) => state.expanded.add(module.name));
+      renderTree();
+    }
+
+    function collapseAll() {
+      state.expanded.clear();
+      if (state.focusedModule) state.expanded.add(state.focusedModule);
+      renderTree();
+    }
+
+    function init() {
+      const raw = document.getElementById("mapData").textContent;
+      state.data = JSON.parse(raw);
+      state.focusedModule = state.data.root;
+      state.expanded.add(state.data.root);
+      renderStats();
+      renderTree();
+      renderDependencyView();
+      renderQuickView();
+    }
+
+    searchInput.addEventListener("input", (event) => {
+      state.search = event.target.value.trim();
+      renderTree();
+      renderDependencyView();
+    });
+
+    expandAllBtn.addEventListener("click", expandAll);
+    collapseAllBtn.addEventListener("click", collapseAll);
+    clearFocusBtn.addEventListener("click", () => {
+      state.focusedModule = null;
+      renderTree();
+      renderDependencyView();
+      renderQuickView();
+    });
+
+    try {
+      init();
+    } catch (error) {
+      document.body.innerHTML = `<pre style="padding:24px;color:#7a1f1f">Failed to load interactive map.\n${String(error)}</pre>`;
+    }
+  </script>
+</body>
+</html>
