@@ -1,0 +1,43 @@
+[
+  {
+    "type": "APPROACH",
+    "params": {
+      "smu_select": "Keithley2450",
+      "step_size": 0.5,
+      "test_voltage": 0.05,
+      "lower_threshold": 1e-11,
+      "upper_threshold": 5e-11,
+      "max_attempts": 16,
+      "delay": 0.001
+    }
+  },
+  {
+    "type": "DCIV",
+    "params": {
+      "sweep_path": "/run/media/shreyas/Data/vipsa_for_PUDA/archive/simulation_2026-04-15/runs/live_gui_e2e_20260421_161034/inputs/dciv_sweep.csv",
+      "pos_compl": 0.001,
+      "neg_compl": 0.001,
+      "sweep_delay": 0.0005,
+      "align": false,
+      "approach": false,
+      "smu_select": "Keithley2450",
+      "use_4way_split": true,
+      "include_read_probe": true,
+      "read_probe_mode": "between_segments",
+      "current_autorange": false
+    }
+  },
+  {
+    "type": "PULSE",
+    "params": {
+      "pulse_path": "/run/media/shreyas/Data/vipsa_for_PUDA/archive/simulation_2026-04-15/runs/live_gui_e2e_20260421_161034/inputs/pulse_train.csv",
+      "compliance": 0.01,
+      "pulse_width": 0.001,
+      "align": false,
+      "approach": false,
+      "smu_select": "KeysightB2901BL",
+      "set_acquire_delay": 0.0005,
+      "current_autorange": false
+    }
+  }
+]

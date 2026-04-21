@@ -320,7 +320,7 @@ class Vipsa_Methods():
                 pass
 
             
-    def center_pad(self, x_distances, y_distances, 
+    def _center_pad(self, x_distances, y_distances, 
                    stage = None):
         
         '''
@@ -336,7 +336,7 @@ class Vipsa_Methods():
             
         stage.move_xy_by((1.55 * x_distances[0]), (1.55* y_distances[0]))
                 
-    def center_pad_zaber(self, x_distance, y_distance, 
+    def _center_pad_zaber(self, x_distance, y_distance, 
                          Zaber_x = None, Zaber_y = None):
         
         '''
@@ -853,7 +853,6 @@ class Vipsa_Methods():
             
         return is_measured, height, saved_file_s 
 
-    
     def run_single_pulse(self, sample_no, device_no, compliance, pulse_width, step_no=None,
                         plot = True, align = True, approach = True, zaber_corr = True, corr_recheck = True, #for correct_course
                         step_size=0.5, test_voltage=0.1, lower_threshold=1e-11, upper_threshold=5e-11, max_attempts=50, delay=1, #for detect_contact_and_move_z

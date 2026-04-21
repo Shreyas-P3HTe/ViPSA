@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-04-21
+
+### PyVISA driver consolidation
+- Promoted the pure PyVISA hardware implementations to the canonical module names: `keithley_2450.py`, `keysight_b2902b.py`, `keithley_707b.py`, and `Source_Measure_Unit.py`.
+- Removed the redundant `_pure_pyvisa.py` filenames after moving their implementations into the canonical files.
+- Removed the obsolete monolithic `Source_Measure_Unit_old.py`.
+- Added TODO comments at the top of the canonical PyVISA driver/orchestration files to track remaining legacy compatibility and real-hardware verification work.
+- Updated `Source_Measure_Unit.py` so the canonical orchestration layer imports `Keithley2450`, `KeysightB2902B`, and `Keithley707B` from the canonical driver module names.
+- Preserved legacy import compatibility for existing GUI/workflow code by keeping `KeysightSMU`, `KeithleySMU`, `Keithley707B`, `SourceMeasureUnit`, and `pyvisa` available from `vipsa.hardware.Source_Measure_Unit`.
+- Added small no-backend PyVISA fallbacks and legacy method-surface helpers to the Keithley 2450 and Keysight B2902B drivers so import/smoke tests remain usable without attached instruments.
+
+### 707B switch cleanup
+- Renamed the raw 707B command helpers from TSP-oriented names to switch-oriented names: `send_switch_command()` and `query_switch_expression()`.
+- Updated internal 707B route operations to use the new switch helper names.
+- Kept `write_tsp()` and `query_tsp()` as backward-compatible aliases for older callers.
+
+### GUI and emulated compatibility testing
+- Added `scripts/emulated_viewfinder_e2e.py`, a reusable live Tk GUI harness that opens the active `VipsaGUI`, patches only equipment construction to archived mock hardware, imports a generated protocol, and runs it through the normal GUI worker-thread path.
+- Ran the live GUI emulation with simulated 707B, Keithley, Keysight, Arduino stage, Zaber stages, and light.
+- Verified an advanced protocol containing `APPROACH`, `DCIV`, and `PULSE` across a two-device simulated grid.
+- Confirmed the emulated GUI run produced sweep, resistance read-probe, and pulse artifacts for each simulated device: 6 CSVs, 6 metadata JSON sidecars, and 6 PNG plots.
+- Saved the passing run log and generated artifacts under `archive/simulation_2026-04-15/runs/live_gui_e2e_20260421_161121/`.
+- Restored module-level `Vision.py` compatibility wrappers (`overlay`, `draw_x_rot`, `capture_image`, `get_thresholds`, `get_contours`, `get_contour_distances`, and `detect_movement_with_crop`) so active GUI imports work with the current `Camera` class implementation.
+
+### Verification
+- Passed `pytest tests/test_scpi_driver_commands.py tests/test_smu_backcompat_smoke.py`.
+- Passed `python -m compileall vipsa scripts/emulated_viewfinder_e2e.py`.
+- Confirmed the full live GUI emulated run completed with status `PASS`, total runtime about 7.3 seconds, peak RSS about 251 MB, and 4 live plot update chunks.
+- Noted an environment split: the GUI-capable conda Python has `pandas`, while the `/usr/bin/pytest` environment used in the sandbox does not, so `test_sweep_generation.py` still needs aligned Python environments before it can run there.
+
 ## 2026-04-15
 
 ### Audit and cleanup
