@@ -38,6 +38,18 @@ class _FakeResource:
             return "0,No error"
         if command == "*OPC?":
             return "1"
+        if command.startswith(":FETC:ARR:SOUR"):
+            return "0.1,0.2,0.3"
+        if command.startswith(":FETC:ARR:VOLT"):
+            return "0.101,0.202,0.303"
+        if command.startswith(":FETC:ARR:CURR"):
+            return "1e-06,2e-06,3e-06"
+        if command.startswith(":FETC:ARR:TIME"):
+            return "0,0.05,0.1"
+        if command.startswith(":TRAC:ACT?"):
+            return "3"
+        if command.startswith(":TRAC:DATA?"):
+            return "0.1,1e-06,0,0.2,2e-06,0.05,0.3,3e-06,0.1"
         return "0"
 
     def read(self):
@@ -215,6 +227,71 @@ class SmuBackCompatSmokeTests(unittest.TestCase):
             self.assertTrue(callable(getattr(smu, name, None)), name)
 
         self.assertEqual(switch.calls, [])
+
+    def test_keithley_voltage_sweep_uses_native_source_list(self):
+        from vipsa.hardware.Source_Measure_Unit import KeithleySMU
+
+        smu = KeithleySMU(device_no=0, address="USB0::FAKE::INSTR")
+        smu.smu.writes.clear()
+
+        records = smu.source_voltage_measure_current(
+            voltages=[0.1, 0.2, 0.3],
+            current_compliance=1e-5,
+            delay_s=0.05,
+            current_range=1e-5,
+            use_auto_current_range=False,
+        )
+
+        writes = smu.smu.writes
+        self.assertEqual(len(records), 3)
+        self.assertIn(":ROUT:TERM REAR", writes)
+        self.assertIn(":SOUR:FUNC VOLT", writes)
+        self.assertIn(":SOUR:VOLT:READ:BACK ON", writes)
+        self.assertIn(":SENS:CURR:RANG:AUTO OFF", writes)
+        self.assertIn(":SENS:CURR:RANG 1e-05", writes)
+        self.assertIn(":SOUR:LIST:VOLT 0.1,0.2,0.3", writes)
+        self.assertIn(':SOUR:SWE:VOLT:LIST 1, 0.05, 1, OFF, "defbuffer1"', writes)
+        self.assertIn("*OPC?", writes)
+        self.assertIn(':TRAC:DATA? 1, 3, "defbuffer1", SOUR, READ, REL', writes)
+        self.assertFalse(any(command.startswith(":SOUR:VOLT:LEV ") for command in writes))
+        self.assertEqual(records[0]["V_meas (V)"], 0.1)
+
+    def test_keysight_voltage_sweep_uses_native_list_and_reads_voltage_current(self):
+        from vipsa.hardware.Source_Measure_Unit import KeysightSMU
+
+        smu = KeysightSMU(device_no=0, address="USB0::FAKE::INSTR")
+        smu.smu.writes.clear()
+
+        records = smu.source_voltage_measure_current(
+            voltages=[0.1, 0.2, 0.3],
+            current_compliance=1e-5,
+            delay_s=0.05,
+            current_range=1e-5,
+            use_auto_current_range=False,
+        )
+
+        writes = smu.smu.writes
+        self.assertEqual(len(records), 3)
+        self.assertIn(":ROUT:TERM REAR", writes)
+        self.assertIn(":FORM:ELEM:SENS VOLT,CURR,TIME,SOUR", writes)
+        self.assertIn(":SOUR1:FUNC:MODE VOLT", writes)
+        self.assertIn(":SOUR1:VOLT:MODE LIST", writes)
+        self.assertIn(':SENS1:FUNC "CURR","VOLT"', writes)
+        self.assertIn(":SENS1:VOLT:RANG:AUTO ON", writes)
+        self.assertIn(":SENS1:CURR:RANG:AUTO OFF", writes)
+        self.assertIn(":SENS1:CURR:RANG 1e-05", writes)
+        self.assertIn(":SOUR1:LIST:VOLT 0.1,0.2,0.3", writes)
+        self.assertIn(":SOUR1:SWE:POIN 3", writes)
+        self.assertIn(":SOUR1:SWE:RANG BEST", writes)
+        self.assertIn(":TRIG1:SOUR TIM", writes)
+        self.assertIn(":TRIG1:TIM 0.05", writes)
+        self.assertIn(":TRIG1:COUN 3", writes)
+        self.assertIn(":TRAC1:CLE", writes)
+        self.assertIn(":FETC:ARR:VOLT? (@1)", writes)
+        self.assertIn(":FETC:ARR:CURR? (@1)", writes)
+        self.assertEqual(records[0]["V_cmd (V)"], 0.1)
+        self.assertEqual(records[0]["V_meas (V)"], 0.101)
+        self.assertEqual(records[0]["Current (A)"], 1e-6)
 
 
 if __name__ == "__main__":

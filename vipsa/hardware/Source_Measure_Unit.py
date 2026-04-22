@@ -320,6 +320,7 @@ class SourceMeasureUnit:
 		compliance: float,
 		delay: float,
 		adr: str | None = None,
+		current_autorange: bool = False,
 	) -> np.ndarray:
 		"""Run a simple linear IV sweep using the universal driver primitive."""
 		if vstep == 0:
@@ -334,6 +335,7 @@ class SourceMeasureUnit:
 			delay_s=float(delay),
 			reset=True,
 			adr=adr,
+			use_auto_current_range=bool(current_autorange),
 		)
 		compatibility_records = self._driver_records_to_compatibility(records)
 		return _records_to_legacy_array(compatibility_records)
@@ -377,6 +379,7 @@ class SourceMeasureUnit:
 		set_acquire_delay: float,
 		current_compliance: float,
 		set_range: float | None = None,
+		current_autorange: bool = False,
 	) -> list[dict[str, float | None]]:
 		"""Run one voltage list against the wrapped driver.
 
@@ -392,6 +395,7 @@ class SourceMeasureUnit:
 				acquire_delay_s=float(set_acquire_delay),
 				current_range=set_range,
 				reset=True,
+				current_autorange=bool(current_autorange),
 			)
 		else:
 			driver_records = self.driver.run_voltage_pulse_train(
@@ -401,6 +405,7 @@ class SourceMeasureUnit:
 				acquire_delay_s=float(set_acquire_delay),
 				current_range=set_range,
 				reset=True,
+				current_autorange=bool(current_autorange),
 			)
 
 		return self._driver_records_to_compatibility(driver_records)
@@ -424,6 +429,7 @@ class SourceMeasureUnit:
 		neg_channel: Any | None = None,
 		include_read_probe: bool = True,
 		read_probe_mode: str = "between_segments",
+		current_autorange: bool = False,
 	) -> tuple[list[dict[str, float | None]], list[dict[str, float | None]]]:
 		"""Split a list into positive and negative segments and run them sequentially."""
 		_ = pos_channel
@@ -444,6 +450,7 @@ class SourceMeasureUnit:
 				set_acquire_delay=acq_value,
 				current_compliance=compliance,
 				set_range=SMU_range,
+				current_autorange=current_autorange,
 			)
 			for record in segment_records:
 				record["Cycle Number"] = float(cycle_number)
@@ -460,6 +467,7 @@ class SourceMeasureUnit:
 					set_acquire_delay=5e-4,
 					current_compliance=res_compliance,
 					set_range=res_range,
+					current_autorange=current_autorange,
 				)
 				for record in probe_records:
 					record["Cycle Number"] = float(cycle_number)
@@ -486,6 +494,7 @@ class SourceMeasureUnit:
 		wait_time: float | None = None,
 		progress_callback: Any | None = None,
 		read_probe_mode: str = "between_segments",
+		current_autorange: bool = False,
 	) -> tuple[list[dict[str, float | None]], list[dict[str, float | None]]]:
 		"""Split a list into four directional segments and run them sequentially."""
 		_ = adr
@@ -526,6 +535,7 @@ class SourceMeasureUnit:
 				set_acquire_delay=acq_value,
 				current_compliance=compliance_map[tag],
 				set_range=SMU_range,
+				current_autorange=current_autorange,
 			)
 			for record in segment_records:
 				record["Cycle Number"] = float(cycle_number)
@@ -549,6 +559,7 @@ class SourceMeasureUnit:
 					set_acquire_delay=5e-4,
 					current_compliance=res_compliance,
 					set_range=res_range,
+					current_autorange=current_autorange,
 				)
 				for record in probe_records:
 					record["Cycle Number"] = float(cycle_number)
@@ -570,8 +581,6 @@ class SourceMeasureUnit:
 	) -> list[dict[str, float | None]]:
 		"""Run a pulse train using the best primitive for the active driver."""
 		_ = adr
-		_ = current_autorange
-
 		voltage_list, times = self._coerce_voltage_list(csv_path=csv_path, bare_list=bare_list)
 
 		if current_compliance is None:
@@ -592,6 +601,7 @@ class SourceMeasureUnit:
 			acquire_delay_s=float(set_acquire_delay),
 			current_range=None,
 			reset=True,
+			current_autorange=bool(current_autorange),
 		)
 		return self._driver_records_to_compatibility(driver_records)
 

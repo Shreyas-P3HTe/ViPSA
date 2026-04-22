@@ -306,6 +306,7 @@ class SCPIInstrument:
         current_range: float | None = None,
         voltage_range: float | None = None,
         reset: bool = True,
+        use_auto_current_range: bool = False,
     ) -> list[ScpiReading]:
         """Source voltage points and measure current at each point.
 
@@ -367,6 +368,7 @@ class SCPIInstrument:
         acquire_delay_s: float | None = None,
         current_range: float | None = None,
         reset: bool = True,
+        current_autorange: bool = False,
     ) -> list[ScpiReading]:
         """Run or approximate a voltage pulse train and return measured points."""
         return []

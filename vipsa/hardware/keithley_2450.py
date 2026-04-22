@@ -32,6 +32,12 @@ class _NullVisaSession:
 			return "1"
 		if command == ":READ?":
 			return "0,0"
+		if command.startswith(":TRAC:ACT?"):
+			return "1"
+		if command.startswith(":TRAC:DATA?"):
+			return "0,0,0"
+		if command.startswith(":SYST:ERR?"):
+			return "0,No error"
 		return "0"
 
 	def close(self) -> None:
@@ -162,6 +168,76 @@ class Keithley2450:
 		if len(parts) == 1:
 			return None, float(parts[0])
 		return None, None
+
+	def _write_voltage_source_list(self, smu, voltages: Sequence[float]) -> None:
+		"""Write a 2450 voltage source list, chunking around SCPI list limits."""
+		if len(voltages) > 2500:
+			raise ValueError("The Keithley 2450 source-list limit is 2500 points.")
+
+		for start in range(0, len(voltages), 100):
+			chunk = voltages[start:start + 100]
+			payload = ",".join(f"{float(value):.12g}" for value in chunk)
+			command = ":SOUR:LIST:VOLT" if start == 0 else ":SOUR:LIST:VOLT:APP"
+			smu.write(f"{command} {payload}")
+
+	def _read_trace_records(
+		self,
+		smu,
+		voltages: Sequence[float],
+		delay_s: float,
+		buffer_name: str = "defbuffer1",
+	) -> list[dict[str, float | None]]:
+		"""Read source/current/time triples from a 2450 trace buffer."""
+		try:
+			raw_count = smu.query(f':TRAC:ACT? "{buffer_name}"').strip()
+			point_count = int(float(raw_count))
+		except Exception:
+			point_count = len(voltages)
+
+		point_count = max(0, min(point_count, len(voltages)))
+		if point_count <= 0:
+			point_count = len(voltages)
+
+		raw = smu.query(
+			f':TRAC:DATA? 1, {point_count}, "{buffer_name}", SOUR, READ, REL'
+		).strip()
+		values = [part.strip() for part in raw.split(",") if part.strip()]
+		records: list[dict[str, float | None]] = []
+
+		for index in range(0, len(values), 3):
+			group = values[index:index + 3]
+			if len(group) < 3:
+				continue
+			try:
+				v_meas = float(group[0])
+				i_meas = float(group[1])
+				timestamp = float(group[2])
+			except ValueError:
+				continue
+			voltage_index = len(records)
+			v_cmd = voltages[voltage_index] if voltage_index < len(voltages) else v_meas
+			records.append(
+				_record(
+					timestamp=timestamp,
+					v_cmd=v_cmd,
+					v_meas=v_meas,
+					i_meas=i_meas,
+					cycle_number=float(voltage_index),
+				)
+			)
+
+		if records:
+			return records
+
+		return [
+			_record(
+				timestamp=float(index) * delay_s,
+				v_cmd=float(voltage),
+				i_meas=None,
+				cycle_number=float(index),
+			)
+			for index, voltage in enumerate(voltages)
+		]
 
 	def _set_nplc(self, function: str, nplc: float | None) -> None:
 		"""Apply an NPLC value when one is supplied."""
@@ -325,6 +401,21 @@ class Keithley2450:
 	def query_reading(self) -> str:
 		"""Query one reading from the active source-measure setup."""
 		return self.query(":READ?")
+
+	def get_error(self, SMU: Any | None = None) -> list[str]:
+		"""Return all currently queued Keithley instrument errors."""
+		dev = self.smu if SMU is None else SMU
+		errors: list[str] = []
+		while True:
+			msg = dev.query(":SYST:ERR?").strip()
+			if msg.startswith("+0") or msg.startswith("0"):
+				break
+			errors.append(msg)
+		return errors
+
+	def read_errors(self) -> list[str]:
+		"""Drain the instrument error queue using the active session."""
+		return self.get_error()
 
 	def connect_switch_path(self) -> None:
 		"""Connect the assigned switch path if a switch wrapper is available."""
@@ -490,7 +581,6 @@ class Keithley2450:
 	) -> list[dict[str, float | None]]:
 		"""Legacy wrapper for a Keithley voltage pulse/list measurement."""
 		_ = csv_path
-		_ = current_autorange
 		voltages = [] if bare_list is None else [float(value) for value in bare_list]
 		return self.run_voltage_pulse_train(
 			voltages=voltages,
@@ -498,6 +588,7 @@ class Keithley2450:
 			pulse_width_s=set_width,
 			acquire_delay_s=set_acquire_delay,
 			adr=adr,
+			current_autorange=current_autorange,
 		)
 
 	def run_read_probe(self, *args: Any, **kwargs: Any) -> None:
@@ -668,15 +759,31 @@ class Keithley2450:
 		reset: bool = True,
 		adr: str | None = None,
 		nplc: float | None = None,
+		use_auto_current_range: bool = False,
+		sweep_range_mode: str = "BEST",
 	) -> list[dict[str, float | None]]:
-		"""Step through a voltage list and measure current at each point."""
-		smu, temporary = self._get_session(adr=adr, timeout=120000)
+		"""Run a native 2450 voltage-list sweep and read the trace buffer."""
+		voltage_values = [float(value) for value in voltages]
+		if not voltage_values:
+			return []
+
+		delay_value = max(0.0, float(delay_s))
+		timeout_ms = max(120000, int((delay_value * len(voltage_values) + 30.0) * 1000))
+		buffer_name = "defbuffer1"
+		range_mode = str(sweep_range_mode).strip().upper()
+		if range_mode not in {"AUTO", "BEST", "FIXED", "MANUAL"}:
+			raise ValueError("sweep_range_mode must be AUTO, BEST, FIXED, or MANUAL.")
+
+		smu, temporary = self._get_session(adr=adr, timeout=timeout_ms)
 		try:
 			if reset:
 				smu.write("*RST")
 				smu.write("*CLS")
+			else:
+				smu.write("*CLS")
 			smu.write(":ROUT:TERM REAR")
 			smu.write(":SOUR:FUNC VOLT")
+			smu.write(":SOUR:VOLT:READ:BACK ON")
 			smu.write(':SENS:FUNC "CURR"')
 			smu.write(f":SENS:CURR:PROT {float(current_compliance):.12g}")
 			smu.write(f":SOUR:VOLT:ILIM {float(current_compliance):.12g}")
@@ -687,38 +794,43 @@ class Keithley2450:
 			else:
 				smu.write(":SOUR:VOLT:RANG:AUTO ON")
 
-			if current_range is not None:
+			if use_auto_current_range or range_mode == "AUTO":
+				smu.write(":SENS:CURR:RANG:AUTO ON")
+			elif current_range is not None:
 				smu.write(":SENS:CURR:RANG:AUTO OFF")
 				smu.write(f":SENS:CURR:RANG {float(current_range):.12g}")
 			else:
-				smu.write(":SENS:CURR:RANG:AUTO ON")
+				fixed_range = abs(float(current_compliance))
+				if fixed_range <= 0:
+					raise ValueError("current_compliance must be non-zero for fixed range.")
+				smu.write(":SENS:CURR:RANG:AUTO OFF")
+				smu.write(f":SENS:CURR:RANG {fixed_range:.12g}")
 
 			if nplc is not None:
 				smu.write(f":SENS:CURR:NPLC {float(nplc):.12g}")
 
-			smu.write(":FORM:ELEM VOLT,CURR")
+			smu.write(f':TRAC:CLE "{buffer_name}"')
+			smu.write(f':TRAC:POIN {len(voltage_values)}, "{buffer_name}"')
+			smu.write(":FORM:DATA ASC")
+			self._write_voltage_source_list(smu, voltage_values)
+			smu.write(
+				f':SOUR:SWE:VOLT:LIST 1, {delay_value:.12g}, 1, OFF, "{buffer_name}"'
+			)
 			smu.write(":OUTP ON")
-
-			t0 = time.perf_counter()
-			records: list[dict[str, float | None]] = []
-			for index, voltage in enumerate(float(v) for v in voltages):
-				smu.write(f":SOUR:VOLT:LEV {voltage:.12g}")
-				if delay_s > 0:
-					time.sleep(delay_s)
-				v_meas, i_meas = self._read_measurement_pair(smu)
-				records.append(
-					_record(
-						timestamp=time.perf_counter() - t0,
-						v_cmd=voltage,
-						v_meas=v_meas,
-						i_meas=i_meas,
-						cycle_number=float(index),
-					)
-				)
-
+			smu.write(":INIT")
+			smu.query("*OPC?").strip()
 			smu.write(":OUTP OFF")
-			return records
+			return self._read_trace_records(
+				smu=smu,
+				voltages=voltage_values,
+				delay_s=delay_value,
+				buffer_name=buffer_name,
+			)
 		finally:
+			try:
+				smu.write(":OUTP OFF")
+			except Exception:
+				pass
 			self._close_temp(smu, temporary)
 
 	def source_current_measure_voltage(
@@ -793,6 +905,7 @@ class Keithley2450:
 		current_range: float | None = None,
 		reset: bool = True,
 		adr: str | None = None,
+		current_autorange: bool = False,
 	) -> list[dict[str, float | None]]:
 		"""Approximate a pulse train using the 2450 native list-sweep model.
 
@@ -800,81 +913,16 @@ class Keithley2450:
 		B2900 series. This method therefore constructs a source list and executes
 		it with the internal list-sweep engine and reading buffer.
 		"""
-		smu, temporary = self._get_session(adr=adr, timeout=120000)
-		try:
-			if not voltages:
-				return []
-
-			delay_value = float(pulse_width_s)
-			measure_delay = delay_value / 2 if acquire_delay_s is None else float(acquire_delay_s)
-			measure_delay = max(0.0, min(delay_value, measure_delay))
-			voltage_csv = ",".join(f"{float(v):.12g}" for v in voltages)
-
-			if reset:
-				smu.write("*RST")
-				smu.write("*CLS")
-
-			smu.write(":ROUT:TERM REAR")
-			smu.write(":SOUR:FUNC VOLT")
-			smu.write(':SENS:FUNC "CURR"')
-			smu.write(f":SENS:CURR:PROT {float(current_compliance):.12g}")
-			smu.write(f":SOUR:VOLT:ILIM {float(current_compliance):.12g}")
-
-			if current_range is not None:
-				smu.write(":SENS:CURR:RANG:AUTO OFF")
-				smu.write(f":SENS:CURR:RANG {float(current_range):.12g}")
-			else:
-				smu.write(":SENS:CURR:RANG:AUTO ON")
-
-			smu.write(f":SOUR:DEL {measure_delay:.12g}")
-			smu.write(':TRAC:CLE "defbuffer1"')
-			smu.write(":TRAC:POIN 100000, \"defbuffer1\"")
-			smu.write(":FORM:ELEM VOLT,CURR")
-
-			smu.write(f":SOUR:LIST:VOLT {voltage_csv}")
-			smu.write(
-				f':SOUR:SWE:VOLT:LIST 1, {delay_value:.12g}, 1, OFF, "defbuffer1"'
-			)
-
-			smu.write(":OUTP ON")
-			smu.write(":INIT")
-			smu.query("*OPC?").strip()
-			smu.write(":OUTP OFF")
-
-			raw = smu.query(':TRAC:DATA? 1, 999999, "defbuffer1", SOUR, READ, REL').strip()
-			values = [part.strip() for part in raw.split(",") if part.strip()]
-			records: list[dict[str, float | None]] = []
-
-			for index in range(0, len(values), 3):
-				group = values[index:index + 3]
-				if len(group) < 3:
-					continue
-				v_cmd = float(group[0])
-				i_meas = float(group[1])
-				timestamp = float(group[2])
-				records.append(
-					_record(
-						timestamp=timestamp,
-						v_cmd=v_cmd,
-						i_meas=i_meas,
-						cycle_number=float(len(records)),
-					)
-				)
-
-			if not records:
-				for index, voltage in enumerate(voltages):
-					records.append(
-						_record(
-							timestamp=float(index) * delay_value,
-							v_cmd=float(voltage),
-							i_meas=None,
-							cycle_number=float(index),
-						)
-					)
-
-			return records
-		finally:
-			self._close_temp(smu, temporary)
+		_ = acquire_delay_s
+		return self.source_voltage_measure_current(
+			voltages=voltages,
+			current_compliance=current_compliance,
+			delay_s=pulse_width_s,
+			current_range=current_range,
+			reset=reset,
+			adr=adr,
+			use_auto_current_range=current_autorange,
+		)
 
 
 class KeithleySMU(Keithley2450):

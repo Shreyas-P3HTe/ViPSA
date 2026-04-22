@@ -32,7 +32,13 @@ class _NullVisaSession:
 			return "1"
 		if command.startswith(":SYST:ERR?"):
 			return "0,No error"
-		if command.startswith(":FETC:ARR"):
+		if command.startswith(":FETC:ARR:SOUR"):
+			return "0"
+		if command.startswith(":FETC:ARR:VOLT"):
+			return "0"
+		if command.startswith(":FETC:ARR:CURR"):
+			return "0"
+		if command.startswith(":FETC:ARR:TIME"):
 			return "0"
 		if command.startswith(":READ?"):
 			return "0,0"
@@ -577,7 +583,6 @@ class KeysightB2902B:
 	) -> list[dict[str, float | None]]:
 		"""Legacy wrapper for a Keysight voltage pulse/list measurement."""
 		_ = csv_path
-		_ = current_autorange
 		voltages = [] if bare_list is None else [float(value) for value in bare_list]
 		if current_compliance is None:
 			current_compliance = compliance
@@ -590,6 +595,7 @@ class KeysightB2902B:
 			pulse_width_s=width,
 			acquire_delay_s=set_acquire_delay,
 			adr=adr,
+			current_autorange=current_autorange,
 		)
 
 	def response_dealer(self, raw_response: str) -> dict[str, list[float]]:
@@ -773,24 +779,35 @@ class KeysightB2902B:
 		adr: str | None = None,
 	) -> list[dict[str, float | None]]:
 		"""Run a voltage-list IV primitive using Keysight list mode."""
-		smu, temporary = self._get_session(adr=adr, timeout=120000)
-		try:
-			if not voltages:
-				return []
+		voltage_values = [float(value) for value in voltages]
+		if not voltage_values:
+			return []
 
+		delay_value = max(0.0, float(delay_s))
+		timeout_ms = max(120000, int((delay_value * len(voltage_values) + 30.0) * 1000))
+		range_mode = str(sweep_range_mode).strip().upper()
+		if range_mode not in {"AUTO", "BEST", "FIXED", "MANUAL"}:
+			raise ValueError("sweep_range_mode must be AUTO, BEST, FIXED, or MANUAL.")
+		if range_mode == "MANUAL":
+			range_mode = "FIXED"
+
+		smu, temporary = self._get_session(adr=adr, timeout=timeout_ms)
+		try:
 			suffix = self._channel_suffix
-			voltage_csv = ",".join(f"{float(v):.12g}" for v in voltages)
-			delay_value = float(delay_s)
+			voltage_csv = ",".join(f"{voltage:.12g}" for voltage in voltage_values)
 
 			if reset:
 				smu.write("*RST")
 				smu.write("*CLS")
+			else:
+				smu.write("*CLS")
 
-			smu.write(":FORM:ELEM:SENS VOLT,CURR,TIME")
+			smu.write(":ROUT:TERM REAR")
+			smu.write(":FORM:ELEM:SENS VOLT,CURR,TIME,SOUR")
 			smu.write(f":SOUR{suffix}:FUNC:MODE VOLT")
 			smu.write(f":SOUR{suffix}:VOLT:MODE LIST")
-			smu.write(f":SOUR{suffix}:LIST:VOLT {voltage_csv}")
-			smu.write(f':SENS{suffix}:FUNC "CURR"')
+			smu.write(f':SENS{suffix}:FUNC "CURR","VOLT"')
+			smu.write(f":SENS{suffix}:VOLT:RANG:AUTO ON")
 			smu.write(f":SENS{suffix}:CURR:PROT {float(current_compliance):.12g}")
 
 			if voltage_range is not None:
@@ -805,13 +822,24 @@ class KeysightB2902B:
 				smu.write(f":SENS{suffix}:CURR:RANG:AUTO OFF")
 				smu.write(f":SENS{suffix}:CURR:RANG {float(current_range):.12g}")
 			else:
-				smu.write(f":SENS{suffix}:CURR:RANG:AUTO ON")
+				fixed_range = abs(float(current_compliance))
+				if fixed_range <= 0:
+					raise ValueError("current_compliance must be non-zero for fixed range.")
+				smu.write(f":SENS{suffix}:CURR:RANG:AUTO OFF")
+				smu.write(f":SENS{suffix}:CURR:RANG {fixed_range:.12g}")
 
-			smu.write(f":TRIG:TRAN:DEL 0")
-			smu.write(":TRIG:SOUR TIM")
-			smu.write(f":TRIG:TIM {delay_value:.12g}")
-			smu.write(f":TRIG:COUN {len(voltages)}")
-			smu.write(f":SOUR{suffix}:SWE:POIN {len(voltages)}")
+			smu.write(f":SOUR{suffix}:LIST:VOLT {voltage_csv}")
+			smu.write(f":SOUR{suffix}:SWE:POIN {len(voltage_values)}")
+			smu.write(f":SOUR{suffix}:SWE:RANG {range_mode}")
+			smu.write(f":TRIG{suffix}:TRAN:DEL 0")
+			smu.write(f":TRIG{suffix}:SOUR TIM")
+			smu.write(f":TRIG{suffix}:TIM {delay_value:.12g}")
+			smu.write(f":TRIG{suffix}:COUN {len(voltage_values)}")
+			smu.write(f":TRAC{suffix}:FEED:CONT NEV")
+			smu.write(f":TRAC{suffix}:CLE")
+			smu.write(f":TRAC{suffix}:POIN {len(voltage_values)}")
+			smu.write(f":TRAC{suffix}:FEED SENS")
+			smu.write(f":TRAC{suffix}:FEED:CONT NEXT")
 
 			smu.write(f":OUTP{suffix} ON")
 			smu.write(f":INIT {self._channel_list}")
@@ -819,18 +847,21 @@ class KeysightB2902B:
 			smu.write(f":OUTP{suffix} OFF")
 
 			source_values = self._fetch_ascii_array("SOUR", smu=smu)
+			voltage_readings = self._fetch_ascii_array("VOLT", smu=smu)
 			current_values = self._fetch_ascii_array("CURR", smu=smu)
 			time_values = self._fetch_ascii_array("TIME", smu=smu)
 
 			records: list[dict[str, float | None]] = []
-			for index, voltage in enumerate(voltages):
-				v_cmd = source_values[index] if index < len(source_values) else float(voltage)
+			for index, voltage in enumerate(voltage_values):
+				v_cmd = source_values[index] if index < len(source_values) else voltage
+				v_meas = voltage_readings[index] if index < len(voltage_readings) else None
 				i_meas = current_values[index] if index < len(current_values) else None
 				timestamp = time_values[index] if index < len(time_values) else float(index) * delay_value
 				records.append(
 					_record(
 						timestamp=timestamp,
 						v_cmd=v_cmd,
+						v_meas=v_meas,
 						i_meas=i_meas,
 						cycle_number=float(index),
 					)
@@ -838,6 +869,10 @@ class KeysightB2902B:
 
 			return records
 		finally:
+			try:
+				smu.write(f":OUTP{self._channel_suffix} OFF")
+			except Exception:
+				pass
 			self._close_temp(smu, temporary)
 
 	def source_current_measure_voltage(
@@ -925,6 +960,7 @@ class KeysightB2902B:
 		current_range: float | None = None,
 		reset: bool = True,
 		adr: str | None = None,
+		current_autorange: bool = False,
 	) -> list[dict[str, float | None]]:
 		"""Run a native Keysight pulse/list train on the active channel."""
 		smu, temporary = self._get_session(adr=adr, timeout=120000)
@@ -941,20 +977,30 @@ class KeysightB2902B:
 			if reset:
 				smu.write("*RST")
 				smu.write("*CLS")
+			else:
+				smu.write("*CLS")
 
-			smu.write(":FORM:ELEM:SENS VOLT,CURR,TIME")
+			smu.write(":ROUT:TERM REAR")
+			smu.write(":FORM:ELEM:SENS VOLT,CURR,TIME,SOUR")
 			smu.write(f":SOUR{suffix}:FUNC:MODE VOLT")
 			smu.write(f":SOUR{suffix}:FUNC:SHAP PULS")
 			smu.write(f":SOUR{suffix}:VOLT:MODE LIST")
 			smu.write(f":SOUR{suffix}:LIST:VOLT {voltage_csv}")
-			smu.write(f':SENS{suffix}:FUNC "CURR"')
+			smu.write(f':SENS{suffix}:FUNC "CURR","VOLT"')
+			smu.write(f":SENS{suffix}:VOLT:RANG:AUTO ON")
 			smu.write(f":SENS{suffix}:CURR:PROT {float(current_compliance):.12g}")
 
-			if current_range is not None:
+			if current_autorange:
+				smu.write(f":SENS{suffix}:CURR:RANG:AUTO ON")
+			elif current_range is not None:
 				smu.write(f":SENS{suffix}:CURR:RANG:AUTO OFF")
 				smu.write(f":SENS{suffix}:CURR:RANG {float(current_range):.12g}")
 			else:
-				smu.write(f":SENS{suffix}:CURR:RANG:AUTO ON")
+				fixed_range = abs(float(current_compliance))
+				if fixed_range <= 0:
+					raise ValueError("current_compliance must be non-zero for fixed range.")
+				smu.write(f":SENS{suffix}:CURR:RANG:AUTO OFF")
+				smu.write(f":SENS{suffix}:CURR:RANG {fixed_range:.12g}")
 
 			smu.write(f":SOUR{suffix}:PULS:WIDT {pulse_width:.12g}")
 			smu.write(f":SOUR{suffix}:PULS:DEL 0")
@@ -962,6 +1008,11 @@ class KeysightB2902B:
 			smu.write(f":TRIG{suffix}:ACQ:DEL {acq_delay:.12g}")
 			smu.write(f":TRIG{suffix}:TIM {pulse_width:.12g}")
 			smu.write(f":TRIG{suffix}:COUN {len(voltages)}")
+			smu.write(f":TRAC{suffix}:FEED:CONT NEV")
+			smu.write(f":TRAC{suffix}:CLE")
+			smu.write(f":TRAC{suffix}:POIN {len(voltages)}")
+			smu.write(f":TRAC{suffix}:FEED SENS")
+			smu.write(f":TRAC{suffix}:FEED:CONT NEXT")
 
 			smu.write(f":OUTP{suffix} ON")
 			smu.write(f":INIT {self._channel_list}")
@@ -969,18 +1020,21 @@ class KeysightB2902B:
 			smu.write(f":OUTP{suffix} OFF")
 
 			source_values = self._fetch_ascii_array("SOUR", smu=smu)
+			voltage_readings = self._fetch_ascii_array("VOLT", smu=smu)
 			current_values = self._fetch_ascii_array("CURR", smu=smu)
 			time_values = self._fetch_ascii_array("TIME", smu=smu)
 
 			records: list[dict[str, float | None]] = []
 			for index, voltage in enumerate(voltages):
 				v_cmd = source_values[index] if index < len(source_values) else float(voltage)
+				v_meas = voltage_readings[index] if index < len(voltage_readings) else None
 				i_meas = current_values[index] if index < len(current_values) else None
 				timestamp = time_values[index] if index < len(time_values) else float(index) * pulse_width
 				records.append(
 					_record(
 						timestamp=timestamp,
 						v_cmd=v_cmd,
+						v_meas=v_meas,
 						i_meas=i_meas,
 						cycle_number=float(index),
 					)
@@ -988,6 +1042,10 @@ class KeysightB2902B:
 
 			return records
 		finally:
+			try:
+				smu.write(f":OUTP{self._channel_suffix} OFF")
+			except Exception:
+				pass
 			self._close_temp(smu, temporary)
 
 

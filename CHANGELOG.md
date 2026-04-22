@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-22
+
+### Native SMU voltage-list sweeps
+- Updated the Keithley 2450 voltage-sweep primitive to use the instrument's native source-list sweep and trace-buffer readback instead of sending one voltage level at a time.
+- Updated the Keysight B2900/B2902B voltage-list sweep path to follow the same native SCPI setup pattern, including list mode, timer triggering, trace-buffer setup, operation-complete waiting, and array fetches.
+- Returned applied/measured voltage alongside measured current for both Keithley and Keysight sweep records.
+- Threaded the orchestration-layer `current_autorange` option through the shared SMU facade and vendor drivers.
+- Added regression coverage confirming the Keithley and Keysight drivers use native list-sweep commands and preserve voltage/current readback fields.
+
+### Verification
+- Passed `PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider tests/test_scpi_driver_commands.py tests/test_smu_backcompat_smoke.py`.
+- Full local `pytest` collection still requires environment cleanup for optional `pyvisa` and `pandas` imports used by legacy/archive and sweep-generation tests.
+
 ## 2026-04-21
 
 ### PyVISA driver consolidation
