@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-04-23
+
+### Real-hardware bring-up fixes
+- Updated the tkinter Viewfinder equipment path to explicitly call `Light.connect()` before checking or using the top-light serial connection.
+- Prevented cleanup from sending light commands when the light controller never connected, avoiding misleading secondary "connect first" errors.
+- Updated the workflow-level equipment helper to use the same explicit light connection path before sending startup or error-state light commands.
+- Made Zaber `driver_enable`, park-state, unpark, park, and `driver_disable` operations non-fatal so X-LSQ150A firmware that rejects unsupported setup commands can still connect and move through the legacy axis API.
+- Added a one-time reconnect retry for Keithley 707B switch writes when a cached VISA session reports a `VisaIOError`.
+- Hardened Viewfinder background cleanup so failures while restoring the active 707B route are logged as warnings instead of crashing the worker thread.
+
+### Verification
+- Passed `python -m py_compile vipsa/gui/Viewfinder4_tk.py vipsa/workflows/Main4.py vipsa/hardware/light.py vipsa/hardware/zaber.py vipsa/hardware/keithley_707b.py`.
+- Confirmed the light connection path with a mocked serial smoke check.
+- Pytest was not available in the local shell used for this fix.
+
 ## 2026-04-22
 
 ### Native SMU voltage-list sweeps

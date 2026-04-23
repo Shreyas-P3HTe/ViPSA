@@ -126,7 +126,9 @@ class Vipsa_Methods():
         '''
         try :
             self.top_light = Light()
-            self.top_light.control_lights("rainbow")            
+            if not self.top_light.connect():
+                raise RuntimeError(f"Could not connect lights on {self.top_light.port}.")
+            self.top_light.control_lights("rainbow")
             self.stage = stage('COM5', 115200, 1)
             self.Zaber = Zaber('COM7')
             self.zaber_x, self.zaber_y = self.Zaber.get_devices()
@@ -146,16 +148,17 @@ class Vipsa_Methods():
                 self.top_light.control_lights("off")  
                 
         except Exception as e :
-            
+
             print("Error occured while connecting : ", e)
-            
+
             self.equipment = False
-            if not self.top_light :
+            if not getattr(self, "top_light", None):
                 self.top_light = Light()
-            self.top_light.control_lights("red") 
-            time.sleep(3)
-            self.top_light.control_lights("off")
-        
+            if self.top_light.connect():
+                self.top_light.control_lights("red")
+                time.sleep(3)
+                self.top_light.control_lights("off")
+
         return self.equipment
     
     def disconnect_equipment(self):

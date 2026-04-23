@@ -68,15 +68,48 @@ class Zaber:
         self.x1 = xdevice.get_axis(1)
         self.y1 = ydevice.get_axis(1)
 
-        self.x1.driver_enable()
-        self.y1.driver_enable()
-
-        if self.x1.is_parked():
-            self.x1.unpark()
-        if self.y1.is_parked():
-            self.y1.unpark()
+        self._prepare_axis(self.x1, "X")
+        self._prepare_axis(self.y1, "Y")
 
         return self.x1, self.y1
+
+    @staticmethod
+    def _try_optional_axis_command(description: str, command) -> bool:
+        """
+        Run an optional Zaber setup command without failing older firmware.
+        """
+
+        try:
+            command()
+            return True
+        except Exception as exc:
+            print(f"Warning: skipped Zaber {description}: {exc}")
+            return False
+
+    def _prepare_axis(self, axis, axis_label: str) -> None:
+        """
+        Enable and unpark axes when supported by the connected controller.
+
+        Some X-LSQ150A firmware rejects `driver enable`, while movement still
+        works as in the legacy ViPSA driver. Treat these setup calls as optional.
+        """
+
+        self._try_optional_axis_command(
+            f"{axis_label} driver enable",
+            lambda: axis.driver_enable(),
+        )
+
+        try:
+            is_parked = axis.is_parked()
+        except Exception as exc:
+            print(f"Warning: could not read Zaber {axis_label} park state: {exc}")
+            return
+
+        if is_parked:
+            self._try_optional_axis_command(
+                f"{axis_label} unpark",
+                lambda: axis.unpark(),
+            )
 
     def configure_units(
         self,
@@ -255,10 +288,21 @@ class Zaber:
                 continue
 
             try:
-                if not axis.is_parked():
-                    axis.park()
-            finally:
-                axis.driver_disable()
+                is_parked = axis.is_parked()
+            except Exception as exc:
+                print(f"Warning: could not read Zaber {axis_name} park state: {exc}")
+                is_parked = True
+
+            if not is_parked:
+                self._try_optional_axis_command(
+                    f"{axis_name} park",
+                    lambda: axis.park(),
+                )
+
+            self._try_optional_axis_command(
+                f"{axis_name} driver disable",
+                lambda: axis.driver_disable(),
+            )
 
         self.connection.close()
         print("Connection to Zaber stages is now closed")

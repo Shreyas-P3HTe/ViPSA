@@ -478,7 +478,7 @@ class VipsaGUI:
         if top_light is not None:
             try:
                 control = getattr(top_light, "control_lights", None)
-                if callable(control):
+                if callable(control) and getattr(top_light, "is_connected", False):
                     control("off")
             except Exception:
                 pass
@@ -592,8 +592,8 @@ class VipsaGUI:
             arduino_scale = float(self._get_value("-ARDUINO_SCALE-", "1"))
 
             top_light = Light()
-            if getattr(top_light, "ser_lights", None) is None:
-                raise RuntimeError("Could not connect lights.")
+            if not top_light.connect():
+                raise RuntimeError(f"Could not connect lights on {top_light.port}.")
 
             stage_obj = stage(arduino_port, arduino_baud, arduino_scale)
             if getattr(stage_obj, "ser", None) is None:
@@ -768,12 +768,15 @@ class VipsaGUI:
                             if self._is_abort_requested():
                                 self._safe_stop_hardware(log_message=False)
                                 self._restore_arduino_stage_after_abort()
-                            self._restore_active_manual_route()
+                            try:
+                                self._restore_active_manual_route()
+                            except Exception as exc:
+                                self._log(f"Warning: could not restore switch route: {exc}\n")
                     self.master.after(0, self._refresh_setup_monitor)
                     self.abort_event.clear()
                     self.master.after(0, self._set_task_status, "Idle")
-                except RuntimeError:
-                    pass
+                except Exception as exc:
+                    self._log(f"Warning: background cleanup issue: {exc}\n")
 
         self.worker_thread = threading.Thread(target=runner, daemon=True)
         self.worker_thread.start()
