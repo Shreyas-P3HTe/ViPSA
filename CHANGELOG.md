@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-04-24
+
+### SMU and switch architecture cleanup
+- Finished the ViPSA electrical-test stack refactor into clear layers: raw instrument/session drivers, `SourceMeasureUnit` orchestration, and Testmaker skill/catalog metadata.
+- Kept the Keithley 2450 and Keysight B2900/B2902B drivers focused on low-level PyVISA + SCPI primitives: session helpers, write/query, reset/init/clear, output control, range/compliance/NPLC setup, contact-current helpers, native list sweeps, and pulse primitives.
+- Moved workflow and protocol logic out of the drivers and into `Source_Measure_Unit.py`, while preserving legacy GUI-facing method names and compatibility wrappers.
+- Standardized normalized measurement records to include time, commanded/measured voltage/current, error fields, and cycle number.
+- Kept the Keithley 707B wrapper routing-only, with explicit named-route mapping, flexible channel normalization, and break-before-make route changes through `open_all()` before closing new channels.
+- Added best-effort routing safety so SMU outputs are forced off before switch route changes when possible.
+
+### SourceMeasureUnit and Testmaker cleanup
+- Made `Source_Measure_Unit.py` the canonical orchestration and backward-compatibility layer owning sweep splitting, pulse/read-probe orchestration, voltage-list coercion, delay/acquisition resolution, and legacy array conversion.
+- Kept `__getattr__` driver delegation and preserved `KeithleySMU` / `KeysightSMU` compatibility classes in the existing import path.
+- Upgraded `Testmaker_tk.py` from a simple test catalog into a skill registry with metadata for description, feasibility, composition, driver primitives, orchestration blocks, validation, outputs, and defaults.
+- Preserved the existing Testmaker generators: `dciv_bipolar`, `endurance`, `bias_stress`, `ltp_ltd`, `ppf`, and `retention_read`.
+- Kept protocol export backward-compatible with the current JSON step shape: `{"type": "DCIV", "params": {...}}`, `{"type": "PULSE", "params": {...}}`, with optional `ALIGN` and `APPROACH` prefixes.
+- Centralized shared sweep and pulse validation in Testmaker, including pulse-size guards and explicit INFO-only skill handling.
+- Normalized INFO skills to carry explicit `protocol_type = "INFO"` in the registry.
+
+### Offline and bench-side validation
+- Added `tests/fake_visa.py`, a tiny fake VISA backend with injectable query responses and shared SCPI command logging for offline driver verification.
+- Added `tests/test_command_sequences.py` to verify Keithley init/contact-current/list-sweep command sequences and Keysight pulse-train command sequences without real hardware.
+- Added `bench_validate.py`, a simple no-GUI CLI bench tool for listing VISA resources, identifying instruments, exercising 707B route control, running contact-current checks, running a tiny Keithley IV sweep, and running a Keysight pulse train with printed SCPI traces and cleanup.
+- Kept bench-side safety conservative: stop output before route changes, call `open_all()` before closing new switch routes, and close sessions at the end of each action.
+
+### Verification
+- Passed `python -m py_compile vipsa/gui/Testmaker_tk.py tests/test_smu_backcompat_smoke.py tests/test_scpi_driver_commands.py`.
+- Passed `python -m py_compile tests/fake_visa.py tests/test_command_sequences.py bench_validate.py`.
+- Passed `python -m unittest tests.test_command_sequences`.
+- Passed `python -m unittest discover -s tests` with 23 tests total.
+
 ## 2026-04-23
 
 ### Real-hardware bring-up fixes
@@ -9,6 +40,7 @@
 - Made Zaber `driver_enable`, park-state, unpark, park, and `driver_disable` operations non-fatal so X-LSQ150A firmware that rejects unsupported setup commands can still connect and move through the legacy axis API.
 - Added a one-time reconnect retry for Keithley 707B switch writes when a cached VISA session reports a `VisaIOError`.
 - Hardened Viewfinder background cleanup so failures while restoring the active 707B route are logged as warnings instead of crashing the worker thread.
+- Added a new Testmaker catalog entry, `Basic Electrical :: Voltage Pulse Train`, so simple pulsed electrical measurements can be generated and exported directly from the basic-electrical section.
 
 ### Verification
 - Passed `python -m py_compile vipsa/gui/Viewfinder4_tk.py vipsa/workflows/Main4.py vipsa/hardware/light.py vipsa/hardware/zaber.py vipsa/hardware/keithley_707b.py`.

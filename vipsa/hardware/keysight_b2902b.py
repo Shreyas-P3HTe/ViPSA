@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Sequence
 import time
+import warnings
 
 import pyvisa
 
@@ -207,6 +208,44 @@ class KeysightB2902B:
 		smu.write(f":SOUR{suffix}:FUNC:MODE {src}")
 		smu.write(f':SENS{suffix}:FUNC "{sns}"')
 
+	def _warn_deprecated_protocol(self, method_name: str) -> None:
+		"""Warn once when a driver-level compound helper delegates upward."""
+		attr_name = f"_warned_protocol_{method_name}"
+		if getattr(self, attr_name, False):
+			return
+		warnings.warn(
+			f"{self.__class__.__name__}.{method_name} is deprecated at the driver layer; "
+			"call the SourceMeasureUnit orchestration method instead. "
+			"Delegating for compatibility.",
+			DeprecationWarning,
+			stacklevel=3,
+		)
+		setattr(self, attr_name, True)
+
+	def _build_orchestration_adapter(self):
+		"""Create a temporary orchestration wrapper around this live driver."""
+		existing = getattr(self, "orchestrator", None)
+		if existing is not None:
+			return existing
+		try:
+			from .Source_Measure_Unit import SourceMeasureUnit
+		except ImportError:
+			from Source_Measure_Unit import SourceMeasureUnit
+
+		handler = SourceMeasureUnit(
+			driver=self,
+			tiny_iv_path=getattr(self, "tiny_IV", None),
+		)
+		if getattr(self, "resistance_df", None) is not None:
+			handler.resistance_df = self.resistance_df
+		return handler
+
+	def _delegate_protocol_method(self, method_name: str, *args: Any, **kwargs: Any):
+		"""Delegate a compound measurement helper to SourceMeasureUnit."""
+		self._warn_deprecated_protocol(method_name)
+		handler = self._build_orchestration_adapter()
+		return getattr(handler, method_name)(*args, **kwargs)
+
 	def initialize(self) -> "KeysightB2902B":
 		"""Apply a conservative default state for lab automation."""
 		self.write("*RST")
@@ -361,9 +400,13 @@ class KeysightB2902B:
 		return self.query(f":READ? {self._channel_list}")
 
 	def connect_switch_path(self) -> None:
-		"""Connect the assigned switch path if a switch wrapper is available."""
+		"""Connect the assigned switch path if a switch wrapper is available.
+
+		Best effort: force the SMU output off before changing the active route.
+		"""
 		if self.switch is None:
 			return
+		self._prepare_for_route_change()
 
 		route = self.switch_channel if self.switch_channel is not None else self.switch_profile
 		route_name = route.lower() if isinstance(route, str) else None
@@ -379,9 +422,13 @@ class KeysightB2902B:
 			self.switch.close_channel(route)
 
 	def disconnect_switch_path(self) -> None:
-		"""Open the assigned switch path if a switch wrapper is available."""
+		"""Open the assigned switch path if a switch wrapper is available.
+
+		Best effort: force the SMU output off before changing the active route.
+		"""
 		if self.switch is None:
 			return
+		self._prepare_for_route_change()
 
 		if hasattr(self.switch, "open_all"):
 			self.switch.open_all()
@@ -451,6 +498,18 @@ class KeysightB2902B:
 			smu.write(f":OUTP{self._channel_suffix} OFF")
 		finally:
 			self._close_temp(smu, temporary)
+
+	def _prepare_for_route_change(self) -> None:
+		"""Best-effort safety step before switch-routing changes."""
+		try:
+			self.abort_measurement()
+			return
+		except Exception:
+			pass
+		try:
+			self.stop_output()
+		except Exception:
+			pass
 
 	def abort_measurement(self, adr: str | None = None) -> None:
 		"""Abort active operations and leave the output off."""
@@ -581,56 +640,30 @@ class KeysightB2902B:
 		pulse_width: float | None = None,
 		current_autorange: bool = False,
 	) -> list[dict[str, float | None]]:
-		"""Legacy wrapper for a Keysight voltage pulse/list measurement."""
-		_ = csv_path
-		voltages = [] if bare_list is None else [float(value) for value in bare_list]
-		if current_compliance is None:
-			current_compliance = compliance
-		if current_compliance is None:
-			raise ValueError("A current compliance value is required.")
-		width = set_width if pulse_width is None else pulse_width
-		return self.run_voltage_pulse_train(
-			voltages=voltages,
+		"""Deprecated compound wrapper delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method(
+			"pulsed_measurement",
+			csv_path=csv_path,
 			current_compliance=current_compliance,
-			pulse_width_s=width,
-			acquire_delay_s=set_acquire_delay,
+			set_width=set_width,
+			bare_list=bare_list,
+			set_acquire_delay=set_acquire_delay,
 			adr=adr,
+			compliance=compliance,
+			pulse_width=pulse_width,
 			current_autorange=current_autorange,
 		)
 
 	def response_dealer(self, raw_response: str) -> dict[str, list[float]]:
-		"""Parse raw Keysight source/current/time triples into grouped lists."""
-		results = {"Source": [], "Current": [], "Time": []}
-		split_arr = [item.strip() for item in raw_response.split(",") if item.strip()]
-
-		for index, value in enumerate(split_arr):
-			numeric = float(value)
-			if index % 3 == 0:
-				results["Source"].append(numeric)
-			elif index % 3 == 1:
-				results["Current"].append(numeric)
-			else:
-				results["Time"].append(numeric)
-
-		return results
+		"""Deprecated parsing helper delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method("response_dealer", raw_response)
 
 	def split_pulse_for_2_chan(
 		self,
 		vlist: Sequence[float],
 	) -> tuple[list[float], list[float]]:
-		"""Split signed pulse voltages into positive and negative channel lists."""
-		vlist_p: list[float] = []
-		vlist_n: list[float] = []
-
-		for voltage in [float(value) for value in vlist]:
-			if voltage >= 0:
-				vlist_p.append(voltage)
-				vlist_n.append(0.0)
-			else:
-				vlist_p.append(0.0)
-				vlist_n.append(abs(voltage))
-
-		return vlist_p, vlist_n
+		"""Deprecated pulse-splitting helper delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method("split_pulse_for_2_chan", vlist)
 
 	def hold_voltage_measure_current(
 		self,

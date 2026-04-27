@@ -3,6 +3,7 @@ import os
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 PACKAGE_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 if PACKAGE_ROOT not in sys.path:
@@ -14,7 +15,50 @@ except ModuleNotFoundError:
     sys.modules["pyvisa"] = types.SimpleNamespace(ResourceManager=None)
 
 
+class _FakeResource:
+    def __init__(self, address):
+        self.address = address
+        self.timeout = None
+        self.read_termination = "\n"
+        self.write_termination = "\n"
+
+    def write(self, _command):
+        return None
+
+    def query(self, command):
+        if command == "*IDN?":
+            return "FAKE,MODEL,123,1.0"
+        if command == ":ROUT:TERM?":
+            return "REAR"
+        if command in {":READ?", "READ?"}:
+            return "0.0,0.0"
+        if command == ":SYST:ERR:ALL?":
+            return "0,No error"
+        return "0"
+
+    def read(self):
+        return "1"
+
+    def close(self):
+        return None
+
+
+class _FakeResourceManager:
+    def list_resources(self):
+        return ("USB0::FAKE::INSTR",)
+
+    def open_resource(self, address):
+        return _FakeResource(address)
+
+
 class ScpiDriverSkeletonTests(unittest.TestCase):
+    def setUp(self):
+        self.rm_patch = patch("pyvisa.ResourceManager", return_value=_FakeResourceManager())
+        self.rm_patch.start()
+
+    def tearDown(self):
+        self.rm_patch.stop()
+
     def test_shared_scpi_contract_has_documented_placeholders(self):
         from vipsa.hardware.SCPI import SCPIInstrument, ScpiReading
 

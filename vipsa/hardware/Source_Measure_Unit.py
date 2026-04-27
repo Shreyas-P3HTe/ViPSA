@@ -1,4 +1,10 @@
-"""Universal Source/Measure orchestration layer built on pure PyVISA drivers."""
+"""Universal Source/Measure orchestration and compatibility layer.
+
+This module wraps vendor drivers with workflow-level helpers used by the
+legacy GUI and protocol runner. Drivers stay focused on instrument primitives;
+CSV loading, waveform splitting, read-probe insertion, and legacy-format
+conversion live here.
+"""
 
 # TODO: Resolve remaining legacy compatibility gaps: keep old GUI/workflow call
 # signatures stable while tightening the canonical SMU orchestration API.
@@ -55,33 +61,32 @@ except ImportError:
 	from keysight_b2902b import KeysightB2902B
 
 
-def _warn_once(obj: Any, attr_name: str, message: str) -> None:
-	"""Print one warning once per object instance."""
-	if getattr(obj, attr_name, False):
-		return
-	print(message)
-	setattr(obj, attr_name, True)
-
-
 def _measurement_record(
 	timestamp: float,
-	v_cmd: float | None,
-	current: float | None,
+	v_cmd: float | None = None,
+	i_cmd: float | None = None,
 	v_meas: float | None = None,
+	i_meas: float | None = None,
 	cycle_number: float | None = None,
 ) -> dict[str, float | None]:
 	"""Build one normalized compatibility record."""
 	v_error = None
+	i_error = None
 	if v_cmd is not None and v_meas is not None:
 		v_error = float(v_meas) - float(v_cmd)
+	if i_cmd is not None and i_meas is not None:
+		i_error = float(i_meas) - float(i_cmd)
 
 	return {
 		"Time(T)": float(timestamp),
 		"Voltage (V)": float(v_cmd) if v_cmd is not None else v_meas,
-		"Current (A)": float(current) if current is not None else None,
+		"Current (A)": float(i_meas) if i_meas is not None else i_cmd,
 		"V_cmd (V)": float(v_cmd) if v_cmd is not None else None,
+		"I_cmd (A)": float(i_cmd) if i_cmd is not None else None,
 		"V_meas (V)": float(v_meas) if v_meas is not None else None,
+		"I_meas (A)": float(i_meas) if i_meas is not None else None,
 		"V_error (V)": v_error,
+		"I_error (A)": i_error,
 		"Cycle Number": cycle_number,
 	}
 
@@ -93,8 +98,11 @@ def _records_to_frame(records: list[dict[str, float | None]]) -> pd.DataFrame:
 		"Voltage (V)",
 		"Current (A)",
 		"V_cmd (V)",
+		"I_cmd (A)",
 		"V_meas (V)",
+		"I_meas (A)",
 		"V_error (V)",
+		"I_error (A)",
 		"Cycle Number",
 	]
 	if not records:
@@ -151,10 +159,17 @@ class SourceMeasureUnit:
 		self.resistance_df = None
 		if tiny_iv_path is not None:
 			self.resistance_df = pd.read_csv(tiny_iv_path)
+		self._sync_driver_context()
 
 	def __getattr__(self, name: str) -> Any:
 		"""Delegate unknown attributes to the underlying driver."""
 		return getattr(self.driver, name)
+
+	def _sync_driver_context(self) -> None:
+		"""Mirror orchestration state onto the wrapped driver for compatibility."""
+		setattr(self.driver, "orchestrator", self)
+		setattr(self.driver, "tiny_IV", self.tiny_IV)
+		setattr(self.driver, "resistance_df", self.resistance_df)
 
 	def _coerce_voltage_list(
 		self,
@@ -197,21 +212,106 @@ class SourceMeasureUnit:
 		records: list[dict[str, float | None]],
 		cycle_number: float | None = None,
 	) -> list[dict[str, float | None]]:
-		"""Convert driver-native records into the old compatibility format."""
+		"""Convert driver-native records into the normalized compatibility format."""
 		compatibility_records: list[dict[str, float | None]] = []
 		for index, record in enumerate(records):
+			v_cmd = record.get("V_cmd (V)", record.get("Voltage (V)"))
+			i_cmd = record.get("I_cmd (A)")
+			v_meas = record.get("V_meas (V)")
+			i_meas = record.get("I_meas (A)", record.get("Current (A)"))
+			if v_meas is None and v_cmd is None:
+				v_meas = record.get("Voltage (V)")
 			compatibility_records.append(
 				_measurement_record(
 					timestamp=float(record.get("Time(T)", float(index))),
-					v_cmd=record.get("V_cmd (V)", record.get("Voltage (V)")),
-					current=record.get("Current (A)", record.get("I_meas (A)")),
-					v_meas=record.get("V_meas (V)"),
+					v_cmd=v_cmd,
+					i_cmd=i_cmd,
+					v_meas=v_meas,
+					i_meas=i_meas,
 					cycle_number=cycle_number
 					if cycle_number is not None
 					else record.get("Cycle Number"),
 				)
 			)
 		return compatibility_records
+
+	def records_to_legacy_array(
+		self,
+		records: list[dict[str, float | None]],
+	) -> np.ndarray:
+		"""Convert normalized compatibility records into the legacy array shape."""
+		return _records_to_legacy_array(records)
+
+	def records_to_frame(
+		self,
+		records: list[dict[str, float | None]],
+	) -> pd.DataFrame:
+		"""Convert normalized compatibility records into a DataFrame."""
+		return _records_to_frame(records)
+
+	def _apply_cycle_number(
+		self,
+		records: list[dict[str, float | None]],
+		cycle_number: float,
+	) -> list[dict[str, float | None]]:
+		"""Attach one cycle number to a batch of normalized records."""
+		for record in records:
+			record["Cycle Number"] = float(cycle_number)
+		return records
+
+	def _run_voltage_list_primitive(
+		self,
+		voltage_list: Sequence[float],
+		set_width: float,
+		set_acquire_delay: float,
+		current_compliance: float,
+		set_range: float | None = None,
+		current_autorange: bool = False,
+		adr: str | None = None,
+	) -> list[dict[str, float | None]]:
+		"""Run the shared driver voltage-list primitive and normalize its output."""
+		driver_records = self.driver.run_voltage_pulse_train(
+			voltages=[float(value) for value in voltage_list],
+			current_compliance=float(current_compliance),
+			pulse_width_s=float(set_width),
+			acquire_delay_s=float(set_acquire_delay),
+			current_range=set_range,
+			reset=True,
+			adr=adr,
+			current_autorange=bool(current_autorange),
+		)
+		return self._driver_records_to_compatibility(driver_records)
+
+	def _insert_read_probe_records(
+		self,
+		cycle_number: float,
+		tag: str,
+		probe_map: dict[str, tuple[float, float]],
+		include_read_probe: bool = True,
+		read_probe_mode: str = "between_segments",
+		current_autorange: bool = False,
+		adr: str | None = None,
+	) -> list[dict[str, float | None]]:
+		"""Insert one normalized read-probe block when the current segment needs it."""
+		if not include_read_probe or read_probe_mode != "between_segments":
+			return []
+
+		probe_settings = probe_map.get(tag)
+		if probe_settings is None:
+			return []
+
+		current_compliance, set_range = probe_settings
+		probe_records = self.scan_read_vlist(
+			dev=self.driver,
+			voltage_list=self._default_read_probe_list(),
+			set_width=10e-4,
+			set_acquire_delay=5e-4,
+			current_compliance=current_compliance,
+			set_range=set_range,
+			current_autorange=current_autorange,
+			adr=adr,
+		)
+		return self._apply_cycle_number(probe_records, cycle_number)
 
 	def split_list(self, vlist: Sequence[float]) -> list[list[Any]]:
 		"""Split a voltage list into positive and negative contiguous segments."""
@@ -338,7 +438,7 @@ class SourceMeasureUnit:
 			use_auto_current_range=bool(current_autorange),
 		)
 		compatibility_records = self._driver_records_to_compatibility(records)
-		return _records_to_legacy_array(compatibility_records)
+		return self.records_to_legacy_array(compatibility_records)
 
 	def list_IV_sweep_manual(
 		self,
@@ -369,7 +469,7 @@ class SourceMeasureUnit:
 			point["Time(T)"] = time.perf_counter() - start_time
 			records.append(point)
 
-		return _records_to_legacy_array(records)
+		return self.records_to_legacy_array(records)
 
 	def scan_read_vlist(
 		self,
@@ -380,6 +480,7 @@ class SourceMeasureUnit:
 		current_compliance: float,
 		set_range: float | None = None,
 		current_autorange: bool = False,
+		adr: str | None = None,
 	) -> list[dict[str, float | None]]:
 		"""Run one voltage list against the wrapped driver.
 
@@ -387,28 +488,15 @@ class SourceMeasureUnit:
 		sites. The active wrapped driver is always used.
 		"""
 		_ = dev
-		if self.supports_native_pulse:
-			driver_records = self.driver.run_voltage_pulse_train(
-				voltages=[float(value) for value in voltage_list],
-				current_compliance=float(current_compliance),
-				pulse_width_s=float(set_width),
-				acquire_delay_s=float(set_acquire_delay),
-				current_range=set_range,
-				reset=True,
-				current_autorange=bool(current_autorange),
-			)
-		else:
-			driver_records = self.driver.run_voltage_pulse_train(
-				voltages=[float(value) for value in voltage_list],
-				current_compliance=float(current_compliance),
-				pulse_width_s=float(set_width),
-				acquire_delay_s=float(set_acquire_delay),
-				current_range=set_range,
-				reset=True,
-				current_autorange=bool(current_autorange),
-			)
-
-		return self._driver_records_to_compatibility(driver_records)
+		return self._run_voltage_list_primitive(
+			voltage_list=voltage_list,
+			set_width=set_width,
+			set_acquire_delay=set_acquire_delay,
+			current_compliance=current_compliance,
+			set_range=set_range,
+			current_autorange=current_autorange,
+			adr=adr,
+		)
 
 	def _default_read_probe_list(self) -> list[float]:
 		"""Return the configured tiny-IV read-probe list."""
@@ -440,6 +528,10 @@ class SourceMeasureUnit:
 
 		data_array: list[dict[str, float | None]] = []
 		resistance_array: list[dict[str, float | None]] = []
+		read_probe_map = {
+			"p": (10e-6, 10e-8),
+			"n": (10e-3, 10e-4),
+		}
 
 		for cycle_number, tag, segment in splits:
 			compliance = float(pos_compliance if tag == "p" else neg_compliance)
@@ -451,27 +543,20 @@ class SourceMeasureUnit:
 				current_compliance=compliance,
 				set_range=SMU_range,
 				current_autorange=current_autorange,
+				adr=adr,
 			)
-			for record in segment_records:
-				record["Cycle Number"] = float(cycle_number)
-			data_array.extend(segment_records)
-
-			if include_read_probe and read_probe_mode == "between_segments":
-				read_probe_list = self._default_read_probe_list()
-				res_compliance = 10e-6 if tag == "p" else 10e-3
-				res_range = 10e-8 if tag == "p" else 10e-4
-				probe_records = self.scan_read_vlist(
-					dev=self.driver,
-					voltage_list=read_probe_list,
-					set_width=10e-4,
-					set_acquire_delay=5e-4,
-					current_compliance=res_compliance,
-					set_range=res_range,
+			data_array.extend(self._apply_cycle_number(segment_records, cycle_number))
+			resistance_array.extend(
+				self._insert_read_probe_records(
+					cycle_number=cycle_number,
+					tag=tag,
+					probe_map=read_probe_map,
+					include_read_probe=include_read_probe,
+					read_probe_mode=read_probe_mode,
 					current_autorange=current_autorange,
+					adr=adr,
 				)
-				for record in probe_records:
-					record["Cycle Number"] = float(cycle_number)
-				resistance_array.extend(probe_records)
+			)
 
 		return data_array, resistance_array
 
@@ -497,7 +582,6 @@ class SourceMeasureUnit:
 		current_autorange: bool = False,
 	) -> tuple[list[dict[str, float | None]], list[dict[str, float | None]]]:
 		"""Split a list into four directional segments and run them sequentially."""
-		_ = adr
 		_ = pos_channel
 		_ = neg_channel
 
@@ -523,6 +607,10 @@ class SourceMeasureUnit:
 
 		data_array: list[dict[str, float | None]] = []
 		resistance_array: list[dict[str, float | None]] = []
+		read_probe_map = {
+			"pb": (10e-3, 10e-4),
+			"nb": (10e-6, 10e-8),
+		}
 
 		for segment_index, (cycle_number, tag, segment) in enumerate(splits):
 			if wait_time is not None and wait_time > 0:
@@ -536,34 +624,24 @@ class SourceMeasureUnit:
 				current_compliance=compliance_map[tag],
 				set_range=SMU_range,
 				current_autorange=current_autorange,
+				adr=adr,
 			)
-			for record in segment_records:
-				record["Cycle Number"] = float(cycle_number)
-			data_array.extend(segment_records)
+			data_array.extend(self._apply_cycle_number(segment_records, cycle_number))
 
 			if callable(progress_callback):
 				progress_callback(segment_index + 1, len(splits))
 
-			if (
-				include_read_probe
-				and read_probe_mode == "between_segments"
-				and tag in {"pb", "nb"}
-			):
-				read_probe_list = self._default_read_probe_list()
-				res_compliance = 10e-3 if tag == "pb" else 10e-6
-				res_range = 10e-4 if tag == "pb" else 10e-8
-				probe_records = self.scan_read_vlist(
-					dev=self.driver,
-					voltage_list=read_probe_list,
-					set_width=10e-4,
-					set_acquire_delay=5e-4,
-					current_compliance=res_compliance,
-					set_range=res_range,
+			resistance_array.extend(
+				self._insert_read_probe_records(
+					cycle_number=cycle_number,
+					tag=tag,
+					probe_map=read_probe_map,
+					include_read_probe=include_read_probe,
+					read_probe_mode=read_probe_mode,
 					current_autorange=current_autorange,
+					adr=adr,
 				)
-				for record in probe_records:
-					record["Cycle Number"] = float(cycle_number)
-				resistance_array.extend(probe_records)
+			)
 
 		return data_array, resistance_array
 
@@ -580,7 +658,6 @@ class SourceMeasureUnit:
 		current_autorange: bool = False,
 	) -> list[dict[str, float | None]]:
 		"""Run a pulse train using the best primitive for the active driver."""
-		_ = adr
 		voltage_list, times = self._coerce_voltage_list(csv_path=csv_path, bare_list=bare_list)
 
 		if current_compliance is None:
@@ -594,16 +671,15 @@ class SourceMeasureUnit:
 		if set_acquire_delay is None:
 			_, set_acquire_delay = self._resolve_delay_and_acq(times, set_width, None)
 
-		driver_records = self.driver.run_voltage_pulse_train(
-			voltages=voltage_list,
+		return self._run_voltage_list_primitive(
+			voltage_list=voltage_list,
+			set_width=set_width,
+			set_acquire_delay=set_acquire_delay,
 			current_compliance=float(current_compliance),
-			pulse_width_s=float(set_width),
-			acquire_delay_s=float(set_acquire_delay),
-			current_range=None,
-			reset=True,
+			set_range=None,
 			current_autorange=bool(current_autorange),
+			adr=adr,
 		)
-		return self._driver_records_to_compatibility(driver_records)
 
 	def general_channel_pulsing(
 		self,
@@ -624,7 +700,6 @@ class SourceMeasureUnit:
 		lists are merged algebraically before execution. This keeps the interface
 		stable while leaving the true low-level SCPI work in the driver.
 		"""
-		_ = adr
 		_ = mode
 
 		if positive_voltages is None:
@@ -641,8 +716,9 @@ class SourceMeasureUnit:
 				set_acquire_delay=set_acquire_delay,
 				current_compliance=current_compliance,
 				set_range=set_range,
+				adr=adr,
 			)
-			return _records_to_legacy_array(records)
+			return self.records_to_legacy_array(records)
 
 		if negative_voltages is None:
 			raise ValueError("negative_voltages is required in double mode.")
@@ -661,15 +737,16 @@ class SourceMeasureUnit:
 			set_acquire_delay=set_acquire_delay,
 			current_compliance=current_compliance,
 			set_range=set_range,
+			adr=adr,
 		)
-		return _records_to_legacy_array(records)
+		return self.records_to_legacy_array(records)
 
 	def get_frame_from_records(
 		self,
 		records: list[dict[str, float | None]],
 	) -> pd.DataFrame:
-		"""Return a DataFrame from compatibility records."""
-		return _records_to_frame(records)
+		"""Backward-compatible alias for ``records_to_frame``."""
+		return self.records_to_frame(records)
 
 
 class KeithleySMU(SourceMeasureUnit):
@@ -685,13 +762,12 @@ class KeithleySMU(SourceMeasureUnit):
 		tiny_iv_path: str | None = None,
 	) -> None:
 		"""Create the universal layer around a Keithley 2450 driver."""
-		_ = connect_switch
 		driver = Keithley2450(
 			device_no=device_no,
 			address=address,
 			switch=switch,
 			switch_channel=switch_channel,
-			connect_switch=False,
+			connect_switch=connect_switch,
 		)
 		super().__init__(driver=driver, tiny_iv_path=tiny_iv_path)
 
@@ -710,13 +786,12 @@ class KeysightSMU(SourceMeasureUnit):
 		channel: int = 1,
 	) -> None:
 		"""Create the universal layer around a Keysight B2902B driver."""
-		_ = connect_switch
 		driver = KeysightB2902B(
 			device_no=device_no,
 			address=address,
 			switch=switch,
 			switch_channel=switch_channel,
-			connect_switch=False,
+			connect_switch=connect_switch,
 			channel=channel,
 		)
 		super().__init__(driver=driver, tiny_iv_path=tiny_iv_path)

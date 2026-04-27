@@ -43,6 +43,7 @@ MODE_PULSE = "pulse"
 MODE_INFO = "info"
 
 EPSILON = 1e-9
+MAX_PULSE_POINTS = 200000
 
 TEST_CATALOG: List[Dict[str, object]] = [
     {
@@ -122,6 +123,38 @@ TEST_CATALOG: List[Dict[str, object]] = [
             "final_read_block": False,
             "pulse_compliance": 0.001,
             "set_acquire_delay": 0.0005,
+        },
+    },
+    {
+        "name": "Voltage Pulse Train",
+        "category": "Basic Electrical",
+        "status": STATUS_READY,
+        "mode": MODE_PULSE,
+        "generator": "bias_stress",
+        "protocol_type": "PULSE",
+        "description": "Direct pulsed electrical measurement with repeated voltage pulses and optional read slots.",
+        "feasibility": "Supported directly by the current pulse-list generator and Viewfinder pulse execution path.",
+        "defaults": {
+            "base_width": 0.001,
+            "write_voltage": 1.0,
+            "write_width": 0.001,
+            "write_gap": 0.001,
+            "write_pulses": 1,
+            "read_voltage": 0.1,
+            "read_width": 0.001,
+            "read_gap": 0.001,
+            "read_pulses": 1,
+            "erase_voltage": 0.0,
+            "erase_width": 0.001,
+            "erase_gap": 0.0,
+            "erase_pulses": 0,
+            "pulse_cycles": 100,
+            "cycle_gap": 0.001,
+            "initial_gap": 0.0,
+            "final_read_block": False,
+            "pulse_compliance": 0.01,
+            "set_acquire_delay": 0.0005,
+            "smu_select": "KeysightB2901BL",
         },
     },
     {
@@ -528,7 +561,427 @@ TEST_CATALOG: List[Dict[str, object]] = [
     },
 ]
 
+SKILL_REGISTRY_SOURCE = os.path.join(PACKAGE_ROOT, "docs", "testmaker_composition_scheme.md")
+
+GENERATOR_FUNCTIONS: Dict[str, str] = {
+    "dciv_bipolar": "generate_voltage_data",
+    "endurance": "generate_endurance_slots",
+    "bias_stress": "generate_bias_stress_slots",
+    "ltp_ltd": "generate_ltp_ltd_slots",
+    "ppf": "generate_ppf_slots",
+    "retention_read": "generate_retention_read_slots",
+}
+
+RUNNER_BY_PROTOCOL: Dict[str, str] = {
+    "DCIV": "run_dciv_step",
+    "PULSE": "run_pulse_step",
+}
+
+DISPLAY_ONLY_BLOCKS = [
+    "show_description",
+    "show_feasibility",
+]
+
+COMMON_EXPORT_ACTIONS = [
+    "save_csv",
+    "export_protocol_json",
+    "send_to_viewfinder",
+]
+
+COMMON_SWEEP_VALIDATION = [
+    "forward_voltage > 0",
+    "reset_voltage < 0",
+    "step_voltage > 0",
+    "timer_delay > 0",
+    "cycles >= 1",
+    "forming_voltage >= forward_voltage if forming_cycle",
+    "pos_compl > 0",
+    "neg_compl > 0",
+]
+
+COMMON_PULSE_VALIDATION = [
+    "base_width > 0",
+    "all widths and gaps >= 0",
+    "set_acquire_delay >= 0",
+    "set_acquire_delay < base_width",
+    "write_pulses >= 0",
+    "read_pulses >= 0",
+    "erase_pulses >= 0",
+    "pulse_cycles >= 1",
+    "pulse_compliance > 0",
+    f"generated pulse list points <= {MAX_PULSE_POINTS}",
+]
+
+COMMON_SWEEP_BLOCKS = [
+    "generate_sweep_csv",
+    "export_dciv_json",
+    "SourceMeasureUnit.list_IV_sweep_split",
+    "SourceMeasureUnit.list_IV_sweep_split_4",
+    "insert_read_probe",
+    "convert_records_to_legacy_array",
+]
+
+COMMON_PULSE_BLOCKS = [
+    "generate_pulse_csv",
+    "export_pulse_json",
+    "SourceMeasureUnit.pulsed_measurement",
+    "SourceMeasureUnit.scan_read_vlist",
+    "convert_records_to_legacy_array",
+]
+
+SKILL_REGISTRY_OVERRIDES: Dict[str, Dict[str, object]] = {
+    "Current-Voltage (I-V) Sweep": {
+        "outputs": [
+            "raw_iv_curve",
+            "current_vs_voltage",
+            "switching_threshold_estimates",
+            "hysteresis_summary",
+        ],
+    },
+    "Forming / Electroforming Sweep": {
+        "validation": [
+            "forming_voltage >= forward_voltage when forming_cycle is enabled",
+        ],
+        "outputs": [
+            "forming_iv_curve",
+            "post_forming_iv_curve",
+            "forming_threshold_estimate",
+        ],
+    },
+    "Read Voltage Check": {
+        "orchestration_blocks": COMMON_PULSE_BLOCKS + ["insert_read_probe"],
+        "outputs": [
+            "read_current_trace",
+            "read_resistance_trace",
+            "non_destructive_read_window",
+        ],
+    },
+    "Voltage Pulse Train": {
+        "orchestration_blocks": COMMON_PULSE_BLOCKS + ["insert_read_probe"],
+        "outputs": [
+            "raw_pulse_trace",
+            "write_read_response",
+            "state_probe_trace",
+        ],
+    },
+    "Endurance Cycling": {
+        "orchestration_blocks": COMMON_PULSE_BLOCKS + ["insert_read_probe"],
+        "outputs": [
+            "raw_pulse_trace",
+            "read_resistance_by_cycle",
+            "onoff_by_cycle",
+            "failure_cycle",
+        ],
+    },
+    "Retention Readout Train": {
+        "orchestration_blocks": COMMON_PULSE_BLOCKS + ["insert_read_probe"],
+        "outputs": [
+            "raw_pulse_trace",
+            "retention_curve",
+            "state_vs_time",
+        ],
+    },
+    "Cycle-to-Cycle Variability": {
+        "orchestration_blocks": COMMON_PULSE_BLOCKS + ["insert_read_probe"],
+        "outputs": [
+            "cycle_distributions",
+            "set_reset_distribution",
+            "onoff_distribution",
+        ],
+    },
+    "Device-to-Device Variability": {
+        "orchestration_blocks": COMMON_SWEEP_BLOCKS + ["loop_devices"],
+        "outputs": [
+            "device_iv_curves",
+            "device_threshold_distribution",
+            "device_onoff_distribution",
+        ],
+    },
+    "Multi-Level Cell Programming": {
+        "orchestration_blocks": COMMON_PULSE_BLOCKS + ["insert_read_probe"],
+        "outputs": [
+            "conductance_levels",
+            "level_separation",
+            "programming_trajectory",
+        ],
+    },
+    "Bias Stress / Operational Fatigue": {
+        "orchestration_blocks": COMMON_PULSE_BLOCKS + ["insert_read_probe"],
+        "outputs": [
+            "stress_response_trace",
+            "drift_vs_cycle",
+            "readback_stability",
+        ],
+    },
+    "Temperature Stability": {
+        "orchestration_blocks": COMMON_SWEEP_BLOCKS + ["loop_environment"],
+        "outputs": [
+            "iv_vs_temperature",
+            "stability_vs_temperature",
+        ],
+    },
+    "Humidity Stability": {
+        "orchestration_blocks": COMMON_SWEEP_BLOCKS + ["loop_environment"],
+        "outputs": [
+            "iv_vs_humidity",
+            "stability_vs_humidity",
+        ],
+    },
+    "Bending / Flexibility": {
+        "driver_primitives": [],
+        "orchestration_blocks": DISPLAY_ONLY_BLOCKS,
+        "validation": [],
+        "outputs": [
+            "manual_bend_state_log",
+            "post_bend_iv_curve",
+        ],
+    },
+    "Temperature-Dependent I-V": {
+        "orchestration_blocks": COMMON_SWEEP_BLOCKS + ["loop_environment"],
+        "outputs": [
+            "iv_vs_temperature",
+            "conduction_fit_inputs",
+        ],
+    },
+    "Conduction Mechanism Fitting": {
+        "driver_primitives": [],
+        "orchestration_blocks": DISPLAY_ONLY_BLOCKS,
+        "validation": [],
+        "outputs": [
+            "fit_parameters",
+            "fit_model_scores",
+        ],
+    },
+    "Impedance / EIS": {
+        "driver_primitives": [],
+        "orchestration_blocks": DISPLAY_ONLY_BLOCKS,
+        "validation": [],
+        "outputs": [
+            "impedance_spectrum",
+            "nyquist_points",
+        ],
+    },
+    "Potentiation / Depression (LTP/LTD)": {
+        "orchestration_blocks": COMMON_PULSE_BLOCKS + ["insert_read_probe"],
+        "outputs": [
+            "conductance_trajectory",
+            "potentiation_curve",
+            "depression_curve",
+        ],
+    },
+    "Paired-Pulse Facilitation (PPF)": {
+        "validation": ["write_pulses == 2 for canonical PPF"],
+        "orchestration_blocks": COMMON_PULSE_BLOCKS + ["insert_read_probe"],
+        "outputs": [
+            "paired_pulse_trace",
+            "facilitation_ratio",
+        ],
+    },
+    "Spike-Timing-Dependent Plasticity (STDP)": {
+        "driver_primitives": [],
+        "orchestration_blocks": DISPLAY_ONLY_BLOCKS,
+        "validation": [],
+        "outputs": [
+            "delta_t_response_curve",
+        ],
+    },
+    "Probability-Voltage Sigmoid": {
+        "composition": {
+            "export_actions": COMMON_EXPORT_ACTIONS + ["export_sigmoid_collection"],
+        },
+        "validation": [
+            "base_width > 0",
+            "set_acquire_delay >= 0",
+            "set_acquire_delay < base_width",
+            "pulse_cycles >= 1",
+            "pulse_compliance > 0",
+            "sigmoid_step_voltage != 0",
+        ],
+        "orchestration_blocks": COMMON_PULSE_BLOCKS + ["loop_voltage_points"],
+        "outputs": [
+            "switching_probability_by_voltage",
+            "sigmoid_collection_manifest",
+            "sigmoid_fit_inputs",
+        ],
+    },
+    "TRNG Randomness Test Campaign": {
+        "driver_primitives": [],
+        "orchestration_blocks": DISPLAY_ONLY_BLOCKS,
+        "validation": [],
+        "outputs": [
+            "bitstream_metrics",
+            "randomness_report",
+        ],
+    },
+}
+
+
+def _default_skill_composition(entry: Dict[str, object]) -> Dict[str, object]:
+    generator = entry.get("generator")
+    protocol_type = entry.get("protocol_type")
+    mode = str(entry.get("mode"))
+    export_actions: List[str] = []
+    generator_fn = GENERATOR_FUNCTIONS.get(str(generator)) if generator else None
+
+    if mode == MODE_INFO:
+        return {
+            "protocol_family": "INFO",
+            "generator_fn": None,
+            "export_type": None,
+            "runner": None,
+            "protocol_step_type": None,
+            "source_measure_unit": [],
+            "driver_terminal": None,
+            "steps": list(DISPLAY_ONLY_BLOCKS),
+            "export_actions": [],
+            "supports_align_approach": False,
+            "executable": False,
+            "display_behavior": "description_and_feasibility_only",
+        }
+
+    if mode in {MODE_SWEEP, MODE_PULSE}:
+        export_actions = list(COMMON_EXPORT_ACTIONS)
+
+    if protocol_type == "DCIV":
+        return {
+            "protocol_family": "DCIV",
+            "generator_fn": generator_fn,
+            "export_type": "DCIV",
+            "runner": "run_dciv_step",
+            "protocol_step_type": "DCIV",
+            "source_measure_unit": [
+                "list_IV_sweep_split",
+                "list_IV_sweep_split_4",
+            ],
+            "driver_terminal": "source_voltage_measure_current",
+            "steps": [
+                "generate sweep CSV",
+                "export DCIV JSON",
+                "SourceMeasureUnit.list_IV_sweep_split/list_IV_sweep_split_4",
+                "driver.source_voltage_measure_current",
+            ],
+            "export_actions": export_actions,
+            "supports_align_approach": True,
+            "executable": True,
+            "display_behavior": "full_generator_and_export_ui",
+        }
+
+    if protocol_type == "PULSE":
+        return {
+            "protocol_family": "PULSE",
+            "generator_fn": generator_fn,
+            "export_type": "PULSE",
+            "runner": "run_pulse_step",
+            "protocol_step_type": "PULSE",
+            "source_measure_unit": [
+                "pulsed_measurement",
+                "scan_read_vlist",
+            ],
+            "driver_terminal": "run_voltage_pulse_train",
+            "steps": [
+                "generate pulse CSV",
+                "export PULSE JSON",
+                "SourceMeasureUnit.pulsed_measurement/scan_read_vlist",
+                "driver.run_voltage_pulse_train",
+            ],
+            "export_actions": export_actions,
+            "supports_align_approach": True,
+            "executable": True,
+            "display_behavior": "full_generator_and_export_ui",
+        }
+
+    return {
+        "protocol_family": "INFO",
+        "generator_fn": None,
+        "export_type": protocol_type,
+        "runner": None,
+        "protocol_step_type": protocol_type,
+        "source_measure_unit": [],
+        "driver_terminal": None,
+        "steps": list(DISPLAY_ONLY_BLOCKS),
+        "export_actions": [],
+        "supports_align_approach": False,
+        "executable": False,
+        "display_behavior": "description_and_feasibility_only",
+    }
+
+
+def _default_driver_primitives(entry: Dict[str, object]) -> List[str]:
+    protocol_type = entry.get("protocol_type")
+    if protocol_type == "DCIV":
+        return ["source_voltage_measure_current"]
+    if protocol_type == "PULSE":
+        return ["run_voltage_pulse_train"]
+    return []
+
+
+def _default_orchestration_blocks(entry: Dict[str, object]) -> List[str]:
+    mode = str(entry.get("mode"))
+    if mode == MODE_SWEEP:
+        return list(COMMON_SWEEP_BLOCKS)
+    if mode == MODE_PULSE:
+        return list(COMMON_PULSE_BLOCKS)
+    return list(DISPLAY_ONLY_BLOCKS)
+
+
+def _default_validation(entry: Dict[str, object]) -> List[str]:
+    mode = str(entry.get("mode"))
+    if mode == MODE_SWEEP:
+        return list(COMMON_SWEEP_VALIDATION)
+    if mode == MODE_PULSE:
+        return list(COMMON_PULSE_VALIDATION)
+    return []
+
+
+def _default_outputs(entry: Dict[str, object]) -> List[str]:
+    protocol_type = entry.get("protocol_type")
+    if protocol_type == "DCIV":
+        return [
+            "raw_iv_curve",
+            "current_vs_voltage",
+            "switching_threshold_estimates",
+        ]
+    if protocol_type == "PULSE":
+        return [
+            "raw_pulse_trace",
+            "slot_time_series",
+            "current_vs_time",
+        ]
+    return ["manual_result_summary"]
+
+
+def _build_skill_registry_entry(entry: Dict[str, object]) -> Dict[str, object]:
+    skill = dict(entry)
+    if str(skill.get("mode")) == MODE_INFO and skill.get("protocol_type") is None:
+        skill["protocol_type"] = "INFO"
+    overrides = SKILL_REGISTRY_OVERRIDES.get(str(skill["name"]), {})
+    composition = _default_skill_composition(skill)
+    composition.update(dict(overrides.get("composition", {})))
+
+    skill["composition"] = composition
+    skill["driver_primitives"] = list(
+        overrides.get("driver_primitives", _default_driver_primitives(skill))
+    )
+    skill["orchestration_blocks"] = list(
+        overrides.get("orchestration_blocks", _default_orchestration_blocks(skill))
+    )
+    skill["validation"] = list(
+        _default_validation(skill)
+    )
+    skill["validation"].extend(list(overrides.get("validation", [])))
+    skill["outputs"] = list(
+        overrides.get("outputs", _default_outputs(skill))
+    )
+    skill["registry_kind"] = "skill"
+    skill["registry_source"] = SKILL_REGISTRY_SOURCE
+    return skill
+
+
+_BASE_TEST_CATALOG = TEST_CATALOG
+TEST_CATALOG = [_build_skill_registry_entry(entry) for entry in _BASE_TEST_CATALOG]
+SKILL_REGISTRY = TEST_CATALOG
 TEST_BY_NAME: Dict[str, Dict[str, object]] = {entry["name"]: entry for entry in TEST_CATALOG}
+SKILL_BY_NAME = TEST_BY_NAME
 
 
 def parse_float(value: str, label: str, allow_blank: bool = False, default: float | None = None) -> float | None:
@@ -865,6 +1318,186 @@ def voltage_series(start: float, stop: float, step: float) -> List[float]:
     if abs(values[-1] - stop) > EPSILON:
         values.append(round(float(stop), 12))
     return values
+
+
+def _require_positive(value: float | None, label: str) -> float:
+    if value is None or value <= 0:
+        raise ValueError(f"{label} must be greater than zero.")
+    return float(value)
+
+
+def _require_nonnegative(value: float | None, label: str) -> float:
+    if value is None or value < 0:
+        raise ValueError(f"{label} must be non-negative.")
+    return float(value)
+
+
+def _require_min_count(value: int | None, label: str, minimum: int = 0) -> int:
+    if value is None or value < minimum:
+        comparator = "at least" if minimum > 0 else "non-negative"
+        if minimum > 0:
+            raise ValueError(f"{label} must be at least {minimum}.")
+        raise ValueError(f"{label} must be {comparator}.")
+    return int(value)
+
+
+def validate_sweep_params(params: Dict[str, object]) -> Dict[str, object]:
+    """Validate the shared sweep parameter set."""
+    forward_voltage = _require_positive(
+        float(params["forward_voltage"]) if params["forward_voltage"] is not None else None,
+        "Forward voltage",
+    )
+    reset_voltage = float(params["reset_voltage"]) if params["reset_voltage"] is not None else 0.0
+    if reset_voltage >= 0:
+        raise ValueError("Reset voltage must be negative.")
+    _require_positive(
+        float(params["step_voltage"]) if params["step_voltage"] is not None else None,
+        "Step voltage",
+    )
+    _require_positive(
+        float(params["timer_delay"]) if params["timer_delay"] is not None else None,
+        "Sweep delay",
+    )
+    _require_min_count(
+        int(params["cycles"]) if params["cycles"] is not None else None,
+        "Cycles",
+        minimum=1,
+    )
+    peak_hold_steps = int(params["peak_hold_steps"]) if params["peak_hold_steps"] is not None else 0
+    if peak_hold_steps < 0:
+        raise ValueError("Peak hold steps cannot be negative.")
+    _require_positive(
+        float(params["pos_compl"]) if params["pos_compl"] is not None else None,
+        "Positive compliance",
+    )
+    _require_positive(
+        float(params["neg_compl"]) if params["neg_compl"] is not None else None,
+        "Negative compliance",
+    )
+
+    if bool(params["forming_cycle"]):
+        forming_voltage = _require_positive(
+            float(params["forming_voltage"]) if params["forming_voltage"] is not None else None,
+            "Forming voltage",
+        )
+        if forming_voltage < forward_voltage:
+            raise ValueError(
+                "Forming voltage must be at least as large as forward voltage when forming is enabled."
+            )
+
+    return params
+
+
+def estimate_pulse_point_count(
+    generator: str,
+    params: Dict[str, object],
+) -> int:
+    """Estimate the number of generated pulse slots for one pulse skill."""
+    base = float(params["base_width"])
+    write_width = slots_from_seconds(float(params["write_width"]), base)
+    write_gap = slots_from_seconds(float(params["write_gap"]), base)
+    read_width = slots_from_seconds(float(params["read_width"]), base)
+    read_gap = slots_from_seconds(float(params["read_gap"]), base)
+    erase_width = slots_from_seconds(float(params["erase_width"]), base)
+    erase_gap = slots_from_seconds(float(params["erase_gap"]), base)
+    cycle_gap = slots_from_seconds(float(params["cycle_gap"]), base)
+    initial_gap = slots_from_seconds(float(params["initial_gap"]), base)
+    write_pulses = int(params["write_pulses"])
+    read_pulses = int(params["read_pulses"])
+    erase_pulses = int(params["erase_pulses"])
+    pulse_cycles = int(params["pulse_cycles"])
+
+    if generator == "endurance":
+        per_cycle = (
+            write_pulses * (write_width + write_gap)
+            + read_pulses * (read_width + read_gap)
+            + erase_pulses * (erase_width + erase_gap)
+        )
+        if bool(params["final_read_block"]):
+            per_cycle += read_pulses * (read_width + read_gap)
+        return initial_gap + pulse_cycles * per_cycle + max(0, pulse_cycles - 1) * cycle_gap
+
+    if generator == "bias_stress":
+        per_cycle = write_width + write_gap + read_pulses * (read_width + read_gap)
+        return initial_gap + pulse_cycles * per_cycle + max(0, pulse_cycles - 1) * cycle_gap
+
+    if generator == "ltp_ltd":
+        return (
+            write_pulses * (write_width + write_gap + read_pulses * (read_width + read_gap))
+            + erase_pulses * (erase_width + erase_gap + read_pulses * (read_width + read_gap))
+        )
+
+    if generator == "ppf":
+        per_cycle = 2 * write_width + 2 * write_gap + read_pulses * (read_width + read_gap)
+        return pulse_cycles * per_cycle + max(0, pulse_cycles - 1) * cycle_gap
+
+    if generator == "retention_read":
+        return (
+            initial_gap
+            + write_pulses * (write_width + write_gap)
+            + read_pulses * (read_width + read_gap)
+        )
+
+    return 0
+
+
+def validate_pulse_params(
+    params: Dict[str, object],
+    generator: str,
+) -> Dict[str, object]:
+    """Validate the shared pulse parameter set."""
+    _require_positive(
+        float(params["base_width"]) if params["base_width"] is not None else None,
+        "Base width",
+    )
+
+    for key, label in (
+        ("write_width", "Write width"),
+        ("write_gap", "Write gap"),
+        ("read_width", "Read width"),
+        ("read_gap", "Read gap"),
+        ("erase_width", "Erase width"),
+        ("erase_gap", "Erase gap"),
+        ("cycle_gap", "Cycle gap"),
+        ("initial_gap", "Initial gap"),
+        ("set_acquire_delay", "Acquire delay"),
+    ):
+        _require_nonnegative(
+            float(params[key]) if params[key] is not None else None,
+            label,
+        )
+
+    if float(params["set_acquire_delay"]) >= float(params["base_width"]):
+        raise ValueError("Acquire delay must be smaller than the base width.")
+
+    for key, label, minimum in (
+        ("write_pulses", "Write pulses", 0),
+        ("read_pulses", "Read pulses", 0),
+        ("erase_pulses", "Erase pulses", 0),
+        ("pulse_cycles", "Pulse cycles", 1),
+    ):
+        _require_min_count(
+            int(params[key]) if params[key] is not None else None,
+            label,
+            minimum=minimum,
+        )
+
+    _require_positive(
+        float(params["pulse_compliance"]) if params["pulse_compliance"] is not None else None,
+        "Pulse compliance",
+    )
+
+    estimated_points = estimate_pulse_point_count(generator, params)
+    if estimated_points > MAX_PULSE_POINTS:
+        raise ValueError(
+            "Generated pulse list would be too large "
+            f"({estimated_points} points; limit {MAX_PULSE_POINTS}). "
+            "Reduce cycles, gaps, widths, or increase base width."
+        )
+
+    return params
+
+
 class TestmakerApp:
     def __init__(self, parent: tk.Misc | None = None, protocol_callback=None, close_callback=None) -> None:
         self.generated: Dict[str, object] | None = None
@@ -1255,25 +1888,7 @@ class TestmakerApp:
         forming_cycle = bool(self._bool_var("SW_FORMING", False).get())
         forming_voltage = parse_float(self._string_var("SW_FORMING_V", "").get(), "Forming voltage", allow_blank=True, default=None)
 
-        if forward_voltage is None or forward_voltage <= 0:
-            raise ValueError("Forward voltage must be greater than zero.")
-        if reset_voltage is None or reset_voltage >= 0:
-            raise ValueError("Reset voltage must be negative.")
-        if step_voltage is None or step_voltage <= 0:
-            raise ValueError("Step voltage must be greater than zero.")
-        if timer_delay is None or timer_delay <= 0:
-            raise ValueError("Sweep delay must be greater than zero.")
-        if cycles is None or cycles < 1:
-            raise ValueError("Cycles must be at least 1.")
-        if peak_hold_steps is None or peak_hold_steps < 0:
-            raise ValueError("Peak hold steps cannot be negative.")
-        if forming_cycle:
-            if forming_voltage is None or forming_voltage <= 0:
-                raise ValueError("Forming voltage must be greater than zero when forming is enabled.")
-            if forming_voltage < forward_voltage:
-                raise ValueError("Forming voltage should be at least as large as forward voltage.")
-
-        return {
+        return validate_sweep_params({
             "forward_voltage": forward_voltage,
             "reset_voltage": reset_voltage,
             "step_voltage": step_voltage,
@@ -1288,10 +1903,10 @@ class TestmakerApp:
             "neg_compl": parse_float(self._string_var("SW_NEG_COMPL", "").get(), "Negative compliance"),
             "use_4way_split": bool(self._bool_var("SW_4WAY", True).get()),
             "smu_select": self._string_var("SW_SMU", "Keithley2450").get(),
-        }
+        })
 
     def _get_pulse_params(self) -> Dict[str, object]:
-        params = {
+        return {
             "base_width": parse_float(self._string_var("PU_BASE", "").get(), "Base width"),
             "write_pulses": parse_int(self._string_var("PU_WRITE_N", "").get(), "Write pulses"),
             "write_voltage": parse_float(self._string_var("PU_WRITE_V", "").get(), "Write voltage"),
@@ -1314,23 +1929,6 @@ class TestmakerApp:
             "smu_select": self._string_var("PU_SMU", "KeysightB2901BL").get(),
         }
 
-        for key in ("base_width", "write_width", "write_gap", "read_width", "read_gap", "erase_width", "erase_gap", "cycle_gap", "initial_gap", "set_acquire_delay"):
-            value = params[key]
-            if value is None or value < 0:
-                raise ValueError(f"{key.replace('_', ' ').title()} must be non-negative.")
-        if params["base_width"] == 0:
-            raise ValueError("Base width must be greater than zero.")
-        if params["set_acquire_delay"] >= params["base_width"]:
-            raise ValueError("Acquire delay must be smaller than the base width.")
-
-        for key in ("write_pulses", "read_pulses", "erase_pulses", "pulse_cycles"):
-            value = params[key]
-            if value is None or value < 0:
-                raise ValueError(f"{key.replace('_', ' ').title()} cannot be negative.")
-        if params["pulse_cycles"] < 1:
-            raise ValueError("Pulse cycles must be at least 1.")
-        return params
-
     def _get_sigmoid_range_params(self) -> Dict[str, float]:
         start_voltage = parse_float(self._string_var("SIG_START_V", "").get(), "Sigmoid start voltage")
         stop_voltage = parse_float(self._string_var("SIG_STOP_V", "").get(), "Sigmoid stop voltage")
@@ -1351,7 +1949,10 @@ class TestmakerApp:
         generator = test.get("generator")
         protocol_type = test.get("protocol_type")
         if mode == MODE_INFO or not generator:
-            raise ValueError("This test does not have a direct list generator in the current app.")
+            raise ValueError(
+                "This skill is INFO-only. Testmaker shows description and "
+                "feasibility, but does not generate or export an executable protocol."
+            )
 
         if mode == MODE_SWEEP:
             params = self._get_sweep_params()
@@ -1370,7 +1971,7 @@ class TestmakerApp:
             notes = ["Current protocol compatibility is direct: exported step uses this CSV as sweep_path."]
             return {"test": test, "mode": mode, "protocol_type": protocol_type, "times": times, "voltages": voltages, "notes": notes, "params": params}
 
-        params = self._get_pulse_params()
+        params = validate_pulse_params(self._get_pulse_params(), str(generator))
         if generator == "endurance":
             times, voltages, notes = generate_endurance_slots(params)
         elif generator == "bias_stress":
@@ -1454,7 +2055,7 @@ class TestmakerApp:
         if str(test["name"]) != "Probability-Voltage Sigmoid":
             raise ValueError("Sigmoid collection export is only for the Probability-Voltage Sigmoid test.")
 
-        pulse_params = self._get_pulse_params()
+        pulse_params = validate_pulse_params(self._get_pulse_params(), "bias_stress")
         sigmoid_params = self._get_sigmoid_range_params()
         voltages = voltage_series(
             sigmoid_params["sigmoid_start_voltage"],

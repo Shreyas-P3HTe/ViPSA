@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Sequence
 import time
+import warnings
 
 import pyvisa
 
@@ -246,6 +247,44 @@ class Keithley2450:
 		func = self._normalize_function(function)
 		self.write(f":SENS:{func}:NPLC {float(nplc):.12g}")
 
+	def _warn_deprecated_protocol(self, method_name: str) -> None:
+		"""Warn once when a driver-level compound helper delegates upward."""
+		attr_name = f"_warned_protocol_{method_name}"
+		if getattr(self, attr_name, False):
+			return
+		warnings.warn(
+			f"{self.__class__.__name__}.{method_name} is deprecated at the driver layer; "
+			"call the SourceMeasureUnit orchestration method instead. "
+			"Delegating for compatibility.",
+			DeprecationWarning,
+			stacklevel=3,
+		)
+		setattr(self, attr_name, True)
+
+	def _build_orchestration_adapter(self):
+		"""Create a temporary orchestration wrapper around this live driver."""
+		existing = getattr(self, "orchestrator", None)
+		if existing is not None:
+			return existing
+		try:
+			from .Source_Measure_Unit import SourceMeasureUnit
+		except ImportError:
+			from Source_Measure_Unit import SourceMeasureUnit
+
+		handler = SourceMeasureUnit(
+			driver=self,
+			tiny_iv_path=getattr(self, "tiny_IV", None),
+		)
+		if getattr(self, "resistance_df", None) is not None:
+			handler.resistance_df = self.resistance_df
+		return handler
+
+	def _delegate_protocol_method(self, method_name: str, *args: Any, **kwargs: Any):
+		"""Delegate a compound measurement helper to SourceMeasureUnit."""
+		self._warn_deprecated_protocol(method_name)
+		handler = self._build_orchestration_adapter()
+		return getattr(handler, method_name)(*args, **kwargs)
+
 	def initialize(self) -> "Keithley2450":
 		"""Apply a conservative default state suitable for lab automation."""
 		self.write("*RST")
@@ -418,9 +457,13 @@ class Keithley2450:
 		return self.get_error()
 
 	def connect_switch_path(self) -> None:
-		"""Connect the assigned switch path if a switch wrapper is available."""
+		"""Connect the assigned switch path if a switch wrapper is available.
+
+		Best effort: force the SMU output off before changing the active route.
+		"""
 		if self.switch is None:
 			return
+		self._prepare_for_route_change()
 
 		route = self.switch_channel if self.switch_channel is not None else self.switch_profile
 		route_name = route.lower() if isinstance(route, str) else None
@@ -436,9 +479,13 @@ class Keithley2450:
 			self.switch.close_channel(route)
 
 	def disconnect_switch_path(self) -> None:
-		"""Open the assigned switch path if a switch wrapper is available."""
+		"""Open the assigned switch path if a switch wrapper is available.
+
+		Best effort: force the SMU output off before changing the active route.
+		"""
 		if self.switch is None:
 			return
+		self._prepare_for_route_change()
 
 		if hasattr(self.switch, "open_all"):
 			self.switch.open_all()
@@ -472,6 +519,18 @@ class Keithley2450:
 	def stop_output(self) -> None:
 		"""Turn the output off."""
 		self.set_output(False)
+
+	def _prepare_for_route_change(self) -> None:
+		"""Best-effort safety step before switch-routing changes."""
+		try:
+			self.abort_measurement()
+			return
+		except Exception:
+			pass
+		try:
+			self.stop_output()
+		except Exception:
+			pass
 
 	def abort_measurement(self) -> None:
 		"""Abort any active operation and leave the output off."""
@@ -579,45 +638,48 @@ class Keithley2450:
 		adr: str | None = None,
 		current_autorange: bool = False,
 	) -> list[dict[str, float | None]]:
-		"""Legacy wrapper for a Keithley voltage pulse/list measurement."""
-		_ = csv_path
-		voltages = [] if bare_list is None else [float(value) for value in bare_list]
-		return self.run_voltage_pulse_train(
-			voltages=voltages,
+		"""Deprecated compound wrapper delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method(
+			"pulsed_measurement",
+			csv_path=csv_path,
 			current_compliance=current_compliance,
-			pulse_width_s=set_width,
-			acquire_delay_s=set_acquire_delay,
+			set_width=set_width,
+			bare_list=bare_list,
+			set_acquire_delay=set_acquire_delay,
 			adr=adr,
 			current_autorange=current_autorange,
 		)
 
 	def run_read_probe(self, *args: Any, **kwargs: Any) -> None:
 		"""Legacy placeholder for handler-level read-probe orchestration."""
+		self._warn_deprecated_protocol("run_read_probe")
 		return None
 
 	def identify_linear_segments(self, *args: Any, **kwargs: Any) -> None:
 		"""Legacy placeholder for handler-level linear segment detection."""
+		self._warn_deprecated_protocol("identify_linear_segments")
 		return None
 
-	def split_by_polarity(self, *args: Any, **kwargs: Any) -> None:
-		"""Legacy placeholder for handler-level polarity segmentation."""
-		return None
+	def split_by_polarity(self, *args: Any, **kwargs: Any) -> Any:
+		"""Deprecated polarity splitter delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method("split_list", *args, **kwargs)
 
-	def split_sweep_by_4(self, *args: Any, **kwargs: Any) -> None:
-		"""Legacy placeholder for handler-level four-way sweep segmentation."""
-		return None
+	def split_sweep_by_4(self, *args: Any, **kwargs: Any) -> Any:
+		"""Deprecated four-way splitter delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method("split_list_by_4", *args, **kwargs)
 
-	def list_IV_sweep_split_4(self, *args: Any, **kwargs: Any) -> None:
-		"""Legacy placeholder for handler-level split IV sweep execution."""
-		return None
+	def list_IV_sweep_split_4(self, *args: Any, **kwargs: Any) -> Any:
+		"""Deprecated compound wrapper delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method("list_IV_sweep_split_4", *args, **kwargs)
 
 	def run_linear_segment(self, *args: Any, **kwargs: Any) -> None:
 		"""Legacy placeholder for handler-level linear segment execution."""
+		self._warn_deprecated_protocol("run_linear_segment")
 		return None
 
-	def list_IV_sweep_split(self, *args: Any, **kwargs: Any) -> None:
-		"""Legacy placeholder for handler-level split IV sweep execution."""
-		return None
+	def list_IV_sweep_split(self, *args: Any, **kwargs: Any) -> Any:
+		"""Deprecated compound wrapper delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method("list_IV_sweep_split", *args, **kwargs)
 
 	def hold_voltage_measure_current(
 		self,
