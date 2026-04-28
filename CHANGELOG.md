@@ -8,11 +8,13 @@
 - Switched Keysight scalar voltage/current reads to explicit `:MEAS:VOLT?` and `:MEAS:CURR?` queries, keeping `:READ?` only as a compatibility fallback.
 - Tightened Keysight constant-bias/contact helpers so `hold_voltage_measure_current()`, `hold_current_measure_voltage()`, `get_contact_current_fast()`, and `query_reading()` return normalized spot-read data that matches real bench behavior.
 - Kept native Keysight list-sweep and pulse-train primitives intact while cleaning the shared driver setup and output-off cleanup paths.
+- Added a pulse-width-aware fast NPLC setup for the Keysight native pulse train so short pulses are measured inside the pulse window instead of being averaged down by a slower aperture.
 - Updated the fake VISA backend and offline SCPI tests to cover the new front-terminal and explicit-measure command sequence.
 
 ### Verification
 - Passed `python -m py_compile vipsa/hardware/keysight_b2902b.py tests/fake_visa.py tests/test_command_sequences.py tests/test_smu_backcompat_smoke.py tests/test_scpi_driver_commands.py`.
 - Passed `python -m unittest tests.test_command_sequences tests.test_smu_backcompat_smoke tests.test_scpi_driver_commands` with 19 tests total.
+- Confirmed real-hardware Keysight pulse-train readback on a `1 kOhm` load at both `1 ms` and `100 us` pulse widths, with measured voltage and current matching the expected `0.1 V / 100 uA` pulse points.
 
 ## 2026-04-27
 

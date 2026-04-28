@@ -144,6 +144,8 @@ class CommandSequenceTests(unittest.TestCase):
                 self.assertIn(":SOUR1:FUNC:SHAP PULS", log)
                 self.assertIn(":SOUR1:VOLT:MODE LIST", log)
                 self.assertIn(":SOUR1:LIST:VOLT 0.1,0,-0.1", log)
+                self.assertIn(":SENS1:CURR:NPLC 0.01", log)
+                self.assertIn(":SENS1:VOLT:NPLC 0.01", log)
                 self.assertIn(":TRIG1:ACQ:DEL 0.0005", log)
                 self.assertIn(":INIT (@1)", log)
                 self.assertTrue(_contains(log, ":FETC:ARR:SOUR?"))

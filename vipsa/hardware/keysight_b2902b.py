@@ -285,6 +285,11 @@ class KeysightB2902B:
         current = values[1] if len(values) >= 2 else None
         return voltage, current
 
+    def _estimate_pulse_nplc(self, pulse_width_s: float) -> float:
+        """Choose a fast pulse-friendly NPLC that samples well inside the pulse width."""
+        pulse_width = max(0.0, float(pulse_width_s))
+        return max(0.001, min(0.1, pulse_width * 10.0))
+
     def _warn_deprecated_protocol(self, method_name: str) -> None:
         """Warn once when a driver-level compound helper delegates upward."""
         attr_name = f"_warned_protocol_{method_name}"
@@ -1103,6 +1108,7 @@ class KeysightB2902B:
             pulse_width = float(pulse_width_s)
             acq_delay = pulse_width / 2 if acquire_delay_s is None else float(acquire_delay_s)
             acq_delay = max(0.0, min(pulse_width, acq_delay))
+            pulse_nplc = self._estimate_pulse_nplc(pulse_width)
             voltage_csv = ",".join(f"{value:.12g}" for value in voltage_values)
 
             if reset:
@@ -1120,6 +1126,8 @@ class KeysightB2902B:
             smu.write(f':SENS{suffix}:FUNC "CURR","VOLT"')
             smu.write(f":SENS{suffix}:VOLT:RANG:AUTO ON")
             smu.write(f":SENS{suffix}:CURR:PROT {float(current_compliance):.12g}")
+            smu.write(f":SENS{suffix}:CURR:NPLC {pulse_nplc:.12g}")
+            smu.write(f":SENS{suffix}:VOLT:NPLC {pulse_nplc:.12g}")
 
             if current_autorange:
                 smu.write(f":SENS{suffix}:CURR:RANG:AUTO ON")
