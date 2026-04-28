@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-04-28
+
+### Keysight spot-read overhaul
+- Reworked `vipsa/hardware/keysight_b2902b.py` around the real bench-proven scalar measurement path for the B2900/B2902 family.
+- Made Keysight setup explicitly select the front terminals with best-effort `:ROUT:TERM FRON` while keeping Keithley terminal handling unchanged.
+- Switched Keysight scalar voltage/current reads to explicit `:MEAS:VOLT?` and `:MEAS:CURR?` queries, keeping `:READ?` only as a compatibility fallback.
+- Tightened Keysight constant-bias/contact helpers so `hold_voltage_measure_current()`, `hold_current_measure_voltage()`, `get_contact_current_fast()`, and `query_reading()` return normalized spot-read data that matches real bench behavior.
+- Kept native Keysight list-sweep and pulse-train primitives intact while cleaning the shared driver setup and output-off cleanup paths.
+- Updated the fake VISA backend and offline SCPI tests to cover the new front-terminal and explicit-measure command sequence.
+
+### Verification
+- Passed `python -m py_compile vipsa/hardware/keysight_b2902b.py tests/fake_visa.py tests/test_command_sequences.py tests/test_smu_backcompat_smoke.py tests/test_scpi_driver_commands.py`.
+- Passed `python -m unittest tests.test_command_sequences tests.test_smu_backcompat_smoke tests.test_scpi_driver_commands` with 19 tests total.
+
+## 2026-04-27
+
+### Keysight bench diagnostics
+- Added `scripts/keysight_force_front_test.py` for direct front-terminal forcing and one-point voltage/current readback on a selected Keysight channel.
+- Added `scripts/keysight_explicit_measure_test.py` for a lower-level raw-SCPI check using separate `:MEAS:VOLT?` and `:MEAS:CURR?` queries instead of `:READ?`.
+- Used the new scripts to isolate the real Keysight bench behavior from the legacy driver path and confirm the correct front-terminal, explicit-measure workflow on a known `1 kOhm` load.
+
 ## 2026-04-24
 
 ### SMU and switch architecture cleanup

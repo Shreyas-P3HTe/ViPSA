@@ -34,7 +34,11 @@ class _FakeResource:
         if command == "*IDN?":
             return "FAKE,MODEL,123,1.0"
         if command == ":ROUT:TERM?":
-            return "REAR"
+            return "FRON"
+        if command.startswith(":MEAS:VOLT?"):
+            return "0.0"
+        if command.startswith(":MEAS:CURR?"):
+            return "0.0"
         if command == ":READ?" or command == "READ?":
             return "0.0,0.0"
         if command == ":SYST:ERR:ALL?":
@@ -454,7 +458,7 @@ class SmuBackCompatSmokeTests(unittest.TestCase):
 
         writes = smu.smu.writes
         self.assertEqual(len(records), 3)
-        self.assertIn(":ROUT:TERM REAR", writes)
+        self.assertIn(":ROUT:TERM FRON", writes)
         self.assertIn(":FORM:ELEM:SENS VOLT,CURR,TIME,SOUR", writes)
         self.assertIn(":SOUR1:FUNC:MODE VOLT", writes)
         self.assertIn(":SOUR1:VOLT:MODE LIST", writes)

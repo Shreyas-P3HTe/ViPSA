@@ -29,7 +29,11 @@ class _FakeResource:
         if command == "*IDN?":
             return "FAKE,MODEL,123,1.0"
         if command == ":ROUT:TERM?":
-            return "REAR"
+            return "FRON"
+        if command.startswith(":MEAS:VOLT?"):
+            return "0.0"
+        if command.startswith(":MEAS:CURR?"):
+            return "0.0"
         if command in {":READ?", "READ?"}:
             return "0.0,0.0"
         if command == ":SYST:ERR:ALL?":

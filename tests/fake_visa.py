@@ -16,7 +16,10 @@ class FakeVisaResource:
         self.read_termination = "\n"
         self.write_termination = "\n"
         self.command_log = command_log if command_log is not None else []
-        self.responses = {"*IDN?": "FAKE,INSTRUMENT,0,0"}
+        self.responses = {
+            "*IDN?": "FAKE,INSTRUMENT,0,0",
+            ":ROUT:TERM?": "FRON",
+        }
         if responses:
             self.responses.update(responses)
         self.read_response = read_response
@@ -26,7 +29,15 @@ class FakeVisaResource:
 
     def query(self, cmd: str) -> str:
         self.command_log.append(cmd)
-        return str(self.responses.get(cmd, "0"))
+        if cmd in self.responses:
+            return str(self.responses[cmd])
+        if cmd.startswith(":MEAS:VOLT?"):
+            return "0"
+        if cmd.startswith(":MEAS:CURR?"):
+            return "0"
+        if cmd.startswith(":READ?"):
+            return "0,0"
+        return "0"
 
     def read(self) -> str:
         return str(self.read_response)
@@ -44,7 +55,10 @@ class FakeVisaRM:
         responses: Dict[str, str] | None = None,
         resources: tuple[str, ...] | None = None,
     ) -> None:
-        self.responses = {"*IDN?": "FAKE,INSTRUMENT,0,0"}
+        self.responses = {
+            "*IDN?": "FAKE,INSTRUMENT,0,0",
+            ":ROUT:TERM?": "FRON",
+        }
         if responses:
             self.responses.update(responses)
         self.resources = resources or ("USB0::FAKE::INSTR",)

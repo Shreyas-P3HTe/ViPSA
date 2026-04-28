@@ -57,6 +57,33 @@ class CommandSequenceTests(unittest.TestCase):
             finally:
                 smu.close_session()
 
+    def test_keysight_get_contact_current_sequence(self):
+        from vipsa.hardware.keysight_b2902b import KeysightSMU
+
+        fake_rm = FakeVisaRM(
+            responses={
+                ":MEAS:VOLT? (@1)": "0.1",
+                ":MEAS:CURR? (@1)": "1e-4",
+            }
+        )
+        with patch("pyvisa.ResourceManager", return_value=fake_rm):
+            smu = KeysightSMU(address="USB0::FAKE::INSTR")
+            try:
+                smu.smu.command_log.clear()
+                current = smu.get_contact_current(0.1, compliance=1e-3)
+                log = smu.smu.get_command_log()
+
+                self.assertAlmostEqual(current, 1e-4)
+                self.assertIn(":ROUT:TERM FRON", log)
+                self.assertIn(':SENS1:FUNC "CURR","VOLT"', log)
+                self.assertIn(":FORM:ELEM:SENS VOLT,CURR", log)
+                self.assertIn(":OUTP1 ON", log)
+                self.assertIn(":MEAS:VOLT? (@1)", log)
+                self.assertIn(":MEAS:CURR? (@1)", log)
+                self.assertIn(":OUTP1 OFF", log)
+            finally:
+                smu.close_session()
+
     def test_keithley_source_voltage_measure_current_sequence(self):
         from vipsa.hardware.keithley_2450 import KeithleySMU
 
@@ -112,6 +139,7 @@ class CommandSequenceTests(unittest.TestCase):
                 log = smu.smu.get_command_log()
 
                 self.assertEqual(len(records), 3)
+                self.assertIn(":ROUT:TERM FRON", log)
                 self.assertIn(":SOUR1:FUNC:MODE VOLT", log)
                 self.assertIn(":SOUR1:FUNC:SHAP PULS", log)
                 self.assertIn(":SOUR1:VOLT:MODE LIST", log)
