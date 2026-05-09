@@ -52,6 +52,16 @@ def _default_csv_path(directory, preferred_names=()):
     return os.path.join(directory, csv_files[0])
 
 
+def _preferred_csv_path(directory, preferred_names=()):
+    if not os.path.isdir(directory):
+        return ""
+    for name in preferred_names:
+        candidate = os.path.join(directory, name)
+        if os.path.isfile(candidate):
+            return candidate
+    return ""
+
+
 DEFAULT_SAVE_DIRECTORY = _BASE_DATA_DIR
 DEFAULT_SWEEP_DIRECTORY = os.path.join(_BASE_DATA_DIR, "sweep patterns")
 DEFAULT_SWEEP_PATH = _default_csv_path(
@@ -59,6 +69,7 @@ DEFAULT_SWEEP_PATH = _default_csv_path(
     preferred_names=("Sweep_2Dmems.csv", "tinyIV.csv", "Pulse20.csv"),
 )
 DEFAULT_PULSE_PATH = _default_csv_path(DEFAULT_SWEEP_DIRECTORY, preferred_names=("Pulse20.csv",))
+DEFAULT_TINY_IV_PATH = _preferred_csv_path(DEFAULT_SWEEP_DIRECTORY, preferred_names=("tinyIV.csv", "tinyiv.csv"))
 SETTINGS_FILE = os.path.join(os.path.expanduser("~"), ".vipsa_control_center_settings.json")
 CAMERA_SIZE = (640, 480)
 
@@ -112,6 +123,9 @@ DEFAULT_RUNTIME_SETTINGS = {
         "max_attempts": 100,
         "delay": 1.0,
         "current_autorange": False,
+        "pre_approach_protraction": 30.0,
+        "retract_forward": 50.0,
+        "retract_backward": 50.0,
     },
 }
 
@@ -560,10 +574,23 @@ class VipsaGUI:
             raise RuntimeError("707B switch is not connected.")
 
         address = self.discovered_instruments[key]
+        tiny_iv_path = DEFAULT_TINY_IV_PATH or None
         if key == "keithley":
-            smu = KeithleySMU(device_no=0, address=address, switch=self.switch, switch_channel="keithley")
+            smu = KeithleySMU(
+                device_no=0,
+                address=address,
+                switch=self.switch,
+                switch_channel="keithley",
+                tiny_iv_path=tiny_iv_path,
+            )
         else:
-            smu = KeysightSMU(device_no=0, address=address, switch=self.switch, switch_channel="keysight")
+            smu = KeysightSMU(
+                device_no=0,
+                address=address,
+                switch=self.switch,
+                switch_channel="keysight",
+                tiny_iv_path=tiny_iv_path,
+            )
         self._update_smu_stage_reference(smu)
         return smu
 
@@ -853,6 +880,12 @@ class VipsaGUI:
             self._set_value(f"{prefix}_DELAY", values["delay"])
             if "current_autorange" in values:
                 self._set_value(f"{prefix}_AUTORANGE-", bool(values["current_autorange"]))
+            if "pre_approach_protraction" in values:
+                self._set_value(f"{prefix}_PRE_APPROACH_PROTRACTION", values["pre_approach_protraction"])
+            if "retract_forward" in values:
+                self._set_value(f"{prefix}_RETRACT_FORWARD", values["retract_forward"])
+            if "retract_backward" in values:
+                self._set_value(f"{prefix}_RETRACT_BACKWARD", values["retract_backward"])
 
     def _load_persisted_runtime_settings(self):
         settings = self._default_runtime_settings()
@@ -926,6 +959,21 @@ class VipsaGUI:
             settings["current_autorange"] = self._get_runtime_bool_setting(
                 f"{prefix}_AUTORANGE-",
                 defaults["current_autorange"],
+            )
+        if "pre_approach_protraction" in defaults:
+            settings["pre_approach_protraction"] = self._get_runtime_float_setting(
+                f"{prefix}_PRE_APPROACH_PROTRACTION",
+                defaults["pre_approach_protraction"],
+            )
+        if "retract_forward" in defaults:
+            settings["retract_forward"] = self._get_runtime_float_setting(
+                f"{prefix}_RETRACT_FORWARD",
+                defaults["retract_forward"],
+            )
+        if "retract_backward" in defaults:
+            settings["retract_backward"] = self._get_runtime_float_setting(
+                f"{prefix}_RETRACT_BACKWARD",
+                defaults["retract_backward"],
             )
         return settings
 
@@ -1133,6 +1181,9 @@ class VipsaGUI:
         self._add_entry_row(grid, "Upper Threshold (A)", "-SET_GRID_UPPER_THRESHOLD", str(DEFAULT_RUNTIME_SETTINGS["grid"]["upper_threshold"]), width=18, persist_on_focus_out=True)
         self._add_entry_row(grid, "Max Attempts", "-SET_GRID_MAX_ATTEMPTS", str(DEFAULT_RUNTIME_SETTINGS["grid"]["max_attempts"]), width=18, persist_on_focus_out=True)
         self._add_entry_row(grid, "Settle Delay (s)", "-SET_GRID_DELAY", str(DEFAULT_RUNTIME_SETTINGS["grid"]["delay"]), width=18, persist_on_focus_out=True)
+        self._add_entry_row(grid, "Pre-Approach Protraction", "-SET_GRID_PRE_APPROACH_PROTRACTION", str(DEFAULT_RUNTIME_SETTINGS["grid"]["pre_approach_protraction"]), width=18, persist_on_focus_out=True)
+        self._add_entry_row(grid, "Rightward Safe Retract", "-SET_GRID_RETRACT_FORWARD", str(DEFAULT_RUNTIME_SETTINGS["grid"]["retract_forward"]), width=18, persist_on_focus_out=True)
+        self._add_entry_row(grid, "Leftward Safe Retract", "-SET_GRID_RETRACT_BACKWARD", str(DEFAULT_RUNTIME_SETTINGS["grid"]["retract_backward"]), width=18, persist_on_focus_out=True)
         self._add_checkbox(grid, "Use Current Autorange", "-SET_GRID_AUTORANGE-", default=DEFAULT_RUNTIME_SETTINGS["grid"]["current_autorange"], command=lambda: self._persist_runtime_settings(notify=False))
 
     def _create_grid_tab(self):
@@ -1495,7 +1546,10 @@ class VipsaGUI:
         try:
             rows = list(chunk.tolist()) if hasattr(chunk, "tolist") else list(chunk)
         except Exception:
-            rows = list(chunk)
+            try:
+                rows = list(chunk)
+            except TypeError:
+                return
         if not rows:
             return
 
@@ -1504,7 +1558,7 @@ class VipsaGUI:
                 self._reset_live_plot(label)
 
             for row in rows:
-                if len(row) < 3:
+                if not hasattr(row, "__len__") or len(row) < 3:
                     continue
                 voltage = float(row[1])
                 current = abs(float(row[2]))
@@ -1936,6 +1990,56 @@ class VipsaGUI:
             random.shuffle(devices)
         return devices
 
+    def _grid_protocol_uses_contact(self, protocol):
+        contact_steps = {"APPROACH", "DCIV", "PULSE"}
+        return any(str(step.get("type", "")).strip().upper() in contact_steps for step in protocol)
+
+    def _grid_retract_plan(self, devices, index, contact_settings):
+        forward_retract = abs(float(contact_settings.get("retract_forward", 50.0)))
+        backward_retract = abs(float(contact_settings.get("retract_backward", 50.0)))
+        if index + 1 >= len(devices):
+            return max(forward_retract, backward_retract), "final device clearance"
+
+        current_x = float(devices[index][1])
+        next_x = float(devices[index + 1][1])
+        if next_x > current_x:
+            return forward_retract, "next move is rightward"
+        if next_x < current_x:
+            return backward_retract, "next move is leftward"
+        return max(forward_retract, backward_retract), "next move has no horizontal change"
+
+    def _safe_retract_after_grid_measurement(self, retract_steps, reason):
+        stage = getattr(self.vipsa, "stage", None)
+        if stage is None:
+            self._log("Warning: Arduino stage not connected; skipping safe grid retract.\n")
+            return
+
+        retract_steps = abs(float(retract_steps))
+        if retract_steps <= 0:
+            return
+
+        try:
+            stage.move_z_by(-retract_steps)
+            self._log(f"Safe retract applied: {retract_steps} steps ({reason}).\n")
+        except Exception as exc:
+            self._log(f"Warning: safe retract failed: {exc}\n")
+
+    def _grid_pre_approach_protract(self, contact_settings):
+        stage = getattr(self.vipsa, "stage", None)
+        if stage is None:
+            self._log("Warning: Arduino stage not connected; skipping pre-approach protraction.\n")
+            return
+
+        protraction_steps = float(contact_settings.get("pre_approach_protraction", 30.0))
+        if protraction_steps == 0:
+            return
+
+        try:
+            stage.move_z_by(protraction_steps)
+            self._log(f"Pre-approach protraction applied: {protraction_steps} steps.\n")
+        except Exception as exc:
+            self._log(f"Warning: pre-approach protraction failed: {exc}\n")
+
     def _run_grid_measurement(self, values, measurement_type="DCIV"):
         if not self._require_connection():
             return
@@ -1952,18 +2056,20 @@ class VipsaGUI:
             skip = max(1, int(values["-GRID_SKIP-"]))
             randomize_order = bool(values["-GRID_RANDOMIZE-"])
             save_dir = values["-MEAS_SAVE_FOLDER-"]
+            devices = self._iter_grid_devices(grid_path, startpoint, skip, randomize_order)
             self._log(f"Starting grid measurement ({measurement_type})...\n")
             if measurement_type == "DCIV":
                 sweep_path = values["-GRID_SWEEP_PATH-"]
                 if not self._require_file(sweep_path, "Grid DCIV sweep"):
                     return
-                for dev_id, x, y in self._iter_grid_devices(grid_path, startpoint, skip, randomize_order):
+                for index, (dev_id, x, y) in enumerate(devices):
                     if self._is_abort_requested():
                         self._log("Abort acknowledged during grid DCIV run.\n")
                         break
                     self._log(f"Running DCIV on grid device {int(dev_id)}...\n")
                     self.vipsa.zaber_x.move_absolute(x)
                     self.vipsa.zaber_y.move_absolute(y)
+                    self._grid_pre_approach_protract(contact_settings)
                     measured, height, saved = self.vipsa.run_single_DCIV(
                         sample_no=sample_id,
                         device_no=int(dev_id),
@@ -2002,17 +2108,20 @@ class VipsaGUI:
                         self._log(f"Grid DCIV complete for device {int(dev_id)}. Height={height}, saved to {saved}\n")
                     else:
                         self._log(f"Grid DCIV failed for device {int(dev_id)}.\n")
+                    retract_steps, retract_reason = self._grid_retract_plan(devices, index, contact_settings)
+                    self._safe_retract_after_grid_measurement(retract_steps, retract_reason)
             elif measurement_type == "PULSE":
                 pulse_path = values["-GRID_PULSE_PATH-"]
                 if not self._require_file(pulse_path, "Grid pulse"):
                     return
-                for dev_id, x, y in self._iter_grid_devices(grid_path, startpoint, skip, randomize_order):
+                for index, (dev_id, x, y) in enumerate(devices):
                     if self._is_abort_requested():
                         self._log("Abort acknowledged during grid pulse run.\n")
                         break
                     self._log(f"Running pulse on grid device {int(dev_id)}...\n")
                     self.vipsa.zaber_x.move_absolute(x)
                     self.vipsa.zaber_y.move_absolute(y)
+                    self._grid_pre_approach_protract(contact_settings)
                     self.vipsa.run_single_pulse(
                         sample_no=sample_id,
                         device_no=int(dev_id),
@@ -2039,18 +2148,23 @@ class VipsaGUI:
                         top_light=None,
                         abort_requested=self._is_abort_requested,
                     )
+                    retract_steps, retract_reason = self._grid_retract_plan(devices, index, contact_settings)
+                    self._safe_retract_after_grid_measurement(retract_steps, retract_reason)
             else:
                 protocol = self.protocol_builder.protocol_list_configs
                 if not protocol:
                     self._log("Error: Protocol is empty. Cannot run grid protocol.\n")
                     return
-                for dev_id, x, y in self._iter_grid_devices(grid_path, startpoint, skip, randomize_order):
+                retract_after_protocol = self._grid_protocol_uses_contact(protocol)
+                for index, (dev_id, x, y) in enumerate(devices):
                     if self._is_abort_requested():
                         self._log("Abort acknowledged during grid protocol run.\n")
                         break
                     self._log(f"Running protocol on grid device {int(dev_id)}...\n")
                     self.vipsa.zaber_x.move_absolute(x)
                     self.vipsa.zaber_y.move_absolute(y)
+                    if retract_after_protocol:
+                        self._grid_pre_approach_protract(contact_settings)
                     device_save_dir = os.path.join(save_dir, sample_id, f"device_{int(dev_id)}")
                     os.makedirs(device_save_dir, exist_ok=True)
                     protocol_smus = self._ensure_protocol_smus(protocol)
@@ -2067,6 +2181,9 @@ class VipsaGUI:
                         runtime_profile="grid",
                     )
                     self._log(f"Protocol results for device {int(dev_id)}: {results}\n")
+                    if retract_after_protocol:
+                        retract_steps, retract_reason = self._grid_retract_plan(devices, index, contact_settings)
+                        self._safe_retract_after_grid_measurement(retract_steps, retract_reason)
             self._log(f"Grid measurement ({measurement_type}) finished.\n")
         except Exception as exc:
             self._log(f"Error during grid measurement: {exc}\n")

@@ -36,9 +36,15 @@ class Vipsa_Methods():
     @staticmethod
     def _supports_kwarg(callable_obj, kwarg_name):
         try:
-            return kwarg_name in inspect.signature(callable_obj).parameters
+            parameters = inspect.signature(callable_obj).parameters
         except (TypeError, ValueError):
             return False
+        if kwarg_name in parameters:
+            return True
+        return any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
 
     def _call_with_supported_kwargs(self, callable_obj, *args, **kwargs):
         supported_kwargs = {
@@ -112,6 +118,53 @@ class Vipsa_Methods():
         if not isinstance(values, dict):
             return fallback
         return values.get(key, fallback)
+
+    @staticmethod
+    def _normalize_protocol_smu_key(label):
+        text = str(label or "").strip().lower()
+        if "keithley" in text or "2450" in text:
+            return "keithley"
+        if "keysight" in text or "b290" in text:
+            return "keysight"
+        return None
+
+    def _infer_protocol_smu_key(self, ctype, params, protocol_context=None):
+        requested = params.get('smu', params.get('smu_type', params.get('smu_select')))
+        normalized = self._normalize_protocol_smu_key(requested)
+        if normalized is not None:
+            return normalized
+
+        ctype_text = str(ctype or "").strip().upper()
+        if ctype_text == "DCIV":
+            return "keithley"
+        if ctype_text == "PULSE":
+            return "keysight"
+        if ctype_text != "APPROACH":
+            return None
+
+        if isinstance(protocol_context, dict):
+            current_index = int(protocol_context.get("step_index_zero_based", -1))
+            for step in protocol_context.get("steps", [])[current_index + 1:]:
+                next_type = str(step.get("type", "")).strip().upper()
+                next_params = step.get("params", {})
+                next_smu = next_params.get('smu', next_params.get('smu_type', next_params.get('smu_select')))
+                next_normalized = self._normalize_protocol_smu_key(next_smu)
+                if next_normalized is not None:
+                    return next_normalized
+                if next_type == "DCIV":
+                    return "keithley"
+                if next_type == "PULSE":
+                    return "keysight"
+
+        return "keithley"
+
+    @staticmethod
+    def _connect_smu_route(SMU):
+        if SMU is None:
+            return
+        connect_switch_path = getattr(SMU, "connect_switch_path", None)
+        if callable(connect_switch_path):
+            connect_switch_path()
     
     def connect_equipment(self, SMU_name):
         
@@ -404,13 +457,27 @@ class Vipsa_Methods():
         
         contours, _ = get_contours(image_array)
         x_distances, y_distances, cont_image = get_contour_distances(image_array, contours)
+
+        def _has_valid_offset(distances):
+            if distances is None or len(distances) == 0:
+                return False
+            value = distances[0]
+            if value is None:
+                return False
+            try:
+                return np.isfinite(float(value))
+            except (TypeError, ValueError):
+                return False
+
+        if not _has_valid_offset(x_distances) or not _has_valid_offset(y_distances):
+            raise ValueError("Alignment could not determine a valid pad offset from the camera image.")
         
         if move :
             
             if zaber_corr :
-                self.center_pad_zaber(x_distances, y_distances, Zaber_x, Zaber_y)
+                self._center_pad_zaber(x_distances, y_distances, Zaber_x, Zaber_y)
             else :
-                self.center_pad(x_distances, y_distances, stage)
+                self._center_pad(x_distances, y_distances, stage)
         
         if recheck : #this checks if the correction has taken place.
             top_light.control_lights('on') # Say cheese again !
@@ -620,6 +687,7 @@ class Vipsa_Methods():
             top_light = self.top_light
             
         Data_Handler = dh.Data_Handler() 
+        self._connect_smu_route(SMU)
         SMU_adress = SMU.get_address()
 
         if self._abort_requested(abort_requested):
@@ -811,6 +879,7 @@ class Vipsa_Methods():
             top_light = self.top_light
             
         Data_Handler = dh.Data_Handler() 
+        self._connect_smu_route(SMU)
         SMU_adress = SMU.get_address()
         
         if align : #misaligned device
@@ -900,6 +969,7 @@ class Vipsa_Methods():
             top_light = self.top_light
             
         
+        self._connect_smu_route(SMU)
         SMU_adress = SMU.get_address()
         Data_Handler = dh.Data_Handler()
 
@@ -1417,14 +1487,11 @@ class Vipsa_Methods():
 
         selected_smu = SMU
         if isinstance(SMU, dict):
-            default_smu = 'keithley' if ctype == 'DCIV' else 'keysight'
-            requested_smu = str(
-                params.get('smu', params.get('smu_type', params.get('smu_select', default_smu)))
-            ).strip().lower()
-            if "keithley" in requested_smu or "2450" in requested_smu:
-                requested_smu = "keithley"
-            elif "keysight" in requested_smu or "b290" in requested_smu:
-                requested_smu = "keysight"
+            requested_smu = self._infer_protocol_smu_key(
+                ctype,
+                params,
+                protocol_context=protocol_context,
+            )
             selected_smu = SMU.get(requested_smu)
             if selected_smu is None:
                 available = ", ".join(sorted(SMU.keys()))

@@ -118,9 +118,14 @@ def _record(
     }
 
 
-class KeysightB2902B:
-    """Native SCPI driver for the Keysight B2900/B2902B family."""
+#####---MAIN DRIVER CLASS---#####
 
+class KeysightB2902B:
+    """Native SCPI driver for the Keysight B2900 family.
+    works fine with both single and dual channel SMUs, i.e. B2901BL and B2902A/B.
+    However, the current version forces you to use only the front channels.
+    """
+    
     instrument_family = "keysight_b2902b"
     supports_native_pulse = True
     supports_dual_channel = True
