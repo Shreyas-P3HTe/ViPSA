@@ -10,9 +10,12 @@ import pyvisa
 
 
 class _NullVisaSession:
-    """No-op VISA session used only when PyVISA is unavailable in test imports."""
+    """No-op VISA session used only when PyVISA is unavailable in test imports.
+        Usable for dry runs and simulations
+        """
 
     def __init__(self, address: str) -> None:
+        """Store connection metadata for the no-op test session."""
         self.address = address
         self.timeout = None
         self.read_termination = "\n"
@@ -20,9 +23,11 @@ class _NullVisaSession:
         self.writes: list[str] = []
 
     def write(self, command: str) -> None:
+        """Record a command without talking to real hardware."""
         self.writes.append(command)
 
     def query(self, command: str) -> str:
+        """Record a query and return canned responses for common SCPI calls."""
         self.writes.append(command)
         if command == "*IDN?":
             return "NO_PYVISA,KEYSIGHTB2902B,0,0"
@@ -49,6 +54,7 @@ class _NullVisaSession:
         return "0"
 
     def close(self) -> None:
+        """Mirror the VISA close API for dry-run callers."""
         return None
 
 
@@ -56,13 +62,15 @@ class _NullResourceManager:
     """No-op resource manager used when tests stub ``pyvisa`` without a backend."""
 
     def list_resources(self) -> tuple[str, ...]:
+        """Return a fake VISA resource list for import-time checks."""
         return ("USB0::FAKE::INSTR",)
 
     def open_resource(self, address: str) -> _NullVisaSession:
+        """Create a no-op session for the requested instrument address."""
         return _NullVisaSession(address)
 
 
-def _resource_manager():
+def _resource_manager() -> Any:
     """Return a real ResourceManager when available, else a no-op test fallback."""
     factory = getattr(pyvisa, "ResourceManager", None)
     if callable(factory):
@@ -124,6 +132,13 @@ class KeysightB2902B:
     """Native SCPI driver for the Keysight B2900 family.
     works fine with both single and dual channel SMUs, i.e. B2901BL and B2902A/B.
     However, the current version forces you to use only the front channels.
+
+    NOTE: Channels and terminals is used interchangably, 
+    since B2900 family has only on channel per side.
+    SCPI uses "TERMinal".
+
+    ALSO NOTE: The drivers were originally developed for the B2902B, so everyone is called B2902B.
+    Identity crisis indeed, but it works for all B2900 models.
     """
     
     instrument_family = "keysight_b2902b"
@@ -154,6 +169,8 @@ class KeysightB2902B:
 
         self.initialize()
 
+    ######---INTERNAL UTILITY METHODS---######
+
     @property
     def _channel_suffix(self) -> str:
         """Return the numeric channel suffix used by the active channel."""
@@ -164,7 +181,7 @@ class KeysightB2902B:
         """Return the SCPI channel-list token for the active channel."""
         return f"(@{self.channel})"
 
-    def _open_resource(self, adr: str | None = None, timeout: int = 10000):
+    def _open_resource(self, adr: str | None = None, timeout: int = 10000) -> Any:
         """Open a VISA resource and apply common session settings."""
         target = self.address if adr is None else adr
         smu = self.rm.open_resource(target)
@@ -173,7 +190,7 @@ class KeysightB2902B:
         smu.timeout = timeout
         return smu
 
-    def _get_session(self, adr: str | None = None, timeout: int = 10000):
+    def _get_session(self, adr: str | None = None, timeout: int = 10000) -> tuple[Any, bool]:
         """Return the main session or open a short-lived one for another address."""
         target = self.address if adr is None else adr
         if target == self.address:
@@ -309,7 +326,7 @@ class KeysightB2902B:
         )
         setattr(self, attr_name, True)
 
-    def _build_orchestration_adapter(self):
+    def _build_orchestration_adapter(self) -> Any:
         """Create a temporary orchestration wrapper around this live driver."""
         existing = getattr(self, "orchestrator", None)
         if existing is not None:
@@ -327,11 +344,13 @@ class KeysightB2902B:
             handler.resistance_df = self.resistance_df
         return handler
 
-    def _delegate_protocol_method(self, method_name: str, *args: Any, **kwargs: Any):
+    def _delegate_protocol_method(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
         """Delegate a compound measurement helper to SourceMeasureUnit."""
         self._warn_deprecated_protocol(method_name)
         handler = self._build_orchestration_adapter()
         return getattr(handler, method_name)(*args, **kwargs)
+
+    ######---PUBLIC DRIVER INTERFACE---######
 
     def initialize(self) -> "KeysightB2902B":
         """Apply a conservative default state for lab automation."""
@@ -363,11 +382,19 @@ class KeysightB2902B:
         return self.query(command, adr=adr)
 
     def identify(self) -> str:
-        """Return the instrument ID string."""
+        """Return the instrument ID string.
+        Can be used for quick connection check and identification.
+        
+        Example response: Keysight Technologies,B2901BL,MY61390645,5.0.2029.1911"""
         return self.query("*IDN?")
 
     def get_address(self) -> str | None:
-        """Return the configured VISA resource address for legacy callers."""
+        """Return the configured VISA resource address for legacy callers.
+        Adresses will typically contain the model number of the instrument,
+        which can be used for quick identification.
+        
+        Example address: USB0::0x2A8D::0x9101::MY61390645::INSTR"""
+
         return self.address
 
     def connect(
@@ -375,7 +402,13 @@ class KeysightB2902B:
         address: str | None = None,
         device_no: int = 0,
     ) -> "KeysightB2902B":
-        """Open or reopen the persistent Keysight VISA session."""
+        """Open or reopen the persistent Keysight VISA session.
+        NOTE: You need to configure the device number, since there are 3 equipments 
+        connected via pyvisa, and the address is not always the same. 
+
+        The device number is used to select the address from the list of available resources.
+        As per the current configuration, the device number should be set to 2 to connect to the B2902B,"""
+
         target = address
         if target is None:
             if self.address is not None:
@@ -408,12 +441,18 @@ class KeysightB2902B:
         return self.initialize()
 
     def set_source_function(self, function: str) -> None:
-        """Select voltage or current source mode."""
+        """Select voltage or current source mode.
+        Accepts function tokens such as ``VOLT`` and ``CURR``."""
+        
         func = self._normalize_function(function)
         self.write(f":SOUR{self._channel_suffix}:FUNC:MODE {func}")
 
     def set_sense_function(self, function: str | Sequence[str]) -> None:
-        """Enable one or more sense functions on the active channel."""
+        """Enable one or more sense functions on the active channel.
+        Accepts function tokens such as ``VOLT`` and ``CURR``.
+        For example, to enable both voltage and current sensing, 
+        use ``"VOLT,CURR"`` or ``["VOLT", "CURR"]``."""
+
         tokens = self._normalize_function_list(function)
         self.write(f':SENS{self._channel_suffix}:FUNC {self._format_function_list(tokens)}')
 
@@ -423,7 +462,11 @@ class KeysightB2902B:
         value: float | None = None,
         auto: bool = True,
     ) -> None:
-        """Configure the source range or source autorange."""
+        """Configure the source range or source autorange.
+        Accepts function tokens such as ``VOLT`` and ``CURR``.
+        If ``auto`` is True, the source range will be set to automatic and 
+        the ``value`` parameter will be ignored."""
+
         func = self._normalize_function(function)
         if auto:
             self.write(f":SOUR{self._channel_suffix}:{func}:RANG:AUTO ON")
@@ -439,7 +482,14 @@ class KeysightB2902B:
         value: float | None = None,
         auto: bool = True,
     ) -> None:
-        """Configure the measurement range or measurement autorange."""
+        """Configure the measurement range or measurement autorange.
+        Accepts function tokens such as ``VOLT`` and ``CURR``.
+        If ``auto`` is True, the sense range will be set to automatic and
+        the ``value`` parameter will be ignored.
+        
+        Auto-ranging on keysight equipments is generally fast, 
+        but may result in higher noise floors, for measurements ranging several orders of magnitude."""
+
         func = self._normalize_function(function)
         if auto:
             self.write(f":SENS{self._channel_suffix}:{func}:RANG:AUTO ON")
@@ -492,7 +542,12 @@ class KeysightB2902B:
             self._close_temp(smu, temporary)
 
     def connect_switch_path(self) -> None:
-        """Connect the assigned switch path if a switch wrapper is available."""
+        """Connect the assigned switch path if a switch wrapper is available.
+
+        Simply sends ```keysight``` (named-route command) to the 707B switch if available.
+        Can also handle other switch commands such as open/close channel or profile, 
+        depending on the wrapper implementation."""
+
         if self.switch is None:
             return
         self._prepare_for_route_change()
@@ -511,7 +566,12 @@ class KeysightB2902B:
             self.switch.close_channel(route)
 
     def disconnect_switch_path(self) -> None:
-        """Open the assigned switch path if a switch wrapper is available."""
+        """Open the assigned switch path if a switch wrapper is available.
+        
+        NOTE: current configuration sends "open all", since only one SMU is connected 
+        at a time. More nuanced routing will be required if complex multi-channel setups are used, 
+        depending on the switch wrapper capabilities."""
+
         if self.switch is None:
             return
         self._prepare_for_route_change()
@@ -524,7 +584,11 @@ class KeysightB2902B:
             self.switch.open_channel(self.switch_channel)
 
     def close_session(self) -> None:
-        """Abort output, disconnect the switch, and close the VISA session."""
+        """Abort output, disconnect the switch, and close the VISA session.
+        This is a safe method to call when you want to ensure the instrument is left in a good state.
+        It is also the legacy method for closing the instrument connection, since some callers may not
+        have access to the main session object."""
+
         try:
             self.abort_measurement()
         except Exception:
@@ -542,7 +606,9 @@ class KeysightB2902B:
             self.smu = None
 
     def reset_device(self, adr: str | None = None) -> None:
-        """Reset and reinitialize the instrument."""
+        """Reset and reinitialize the instrument.
+        Legacy helper that can be used when you don't have access to the main session object."""
+
         smu, temporary = self._get_session(adr=adr, timeout=10000)
         try:
             self._apply_default_state(smu)
@@ -550,16 +616,26 @@ class KeysightB2902B:
             self._close_temp(smu, temporary)
 
     def send_command(self, command: str, adr: str | None = None) -> None:
-        """Backward-compatible helper that sends one raw command."""
+        """Backward-compatible helper that sends one raw command.
+        useful for debugging or uncommon operations not directly supported by the driver interface.
+
+        USE CAREFULLY, and ONLY WHEN YOU KNOW WHAT YOU ARE DOING, 
+        since this can leave the instrument in an unexpected state.
+        """
+
         self.write(command, adr=adr)
 
     def sync(self, SMU: Any | None = None) -> Any:
-        """Wait for operation completion using ``*OPC?``."""
+        """Wait for operation completion using ``*OPC?``.
+         Can be used with the main session or a temporary one passed as an argument."""
+        
         dev = self.smu if SMU is None else SMU
         return dev.query("*OPC?").strip()
 
     def get_error(self, SMU: Any | None = None) -> list[str]:
-        """Return all currently queued instrument errors."""
+        """Return all currently queued instrument errors.
+        Can be used with the main session or a temporary one passed as an argument."""
+
         dev = self.smu if SMU is None else SMU
         errors: list[str] = []
         while True:
@@ -570,11 +646,13 @@ class KeysightB2902B:
         return errors
 
     def read_errors(self) -> list[str]:
-        """Drain the instrument error queue using the active session."""
+        """Drain the instrument error queue using the active session.
+        Legacy helper that can be used when you don't have access to the main session object."""
         return self.get_error()
 
     def stop_output(self, adr: str | None = None) -> None:
-        """Turn the channel output off."""
+        """Turn the channel output off.
+        Legacy helper that can be used when you don't have access to the main session object."""
         smu, temporary = self._get_session(adr=adr, timeout=5000)
         try:
             smu.write(f":OUTP{self._channel_suffix} OFF")
@@ -582,7 +660,11 @@ class KeysightB2902B:
             self._close_temp(smu, temporary)
 
     def _prepare_for_route_change(self) -> None:
-        """Best-effort safety step before switch-routing changes."""
+        """Best-effort safety step before switch-routing changes.
+        Legacy helper that can be used when you don't have access to the main session object.
+
+        This is a best-effort method that tries to stop any active source-measure operations and turn the output off,
+        to minimize the risk of issues when changing the switch routing."""
         try:
             self.abort_measurement()
             return
@@ -594,7 +676,8 @@ class KeysightB2902B:
             pass
 
     def abort_measurement(self, adr: str | None = None) -> None:
-        """Abort active operations and leave the output off."""
+        """Abort active operations and leave the output off.
+        Legacy helper that can be used when you don't have access to the main session object."""
         smu, temporary = self._get_session(adr=adr, timeout=5000)
         try:
             try:
@@ -611,151 +694,6 @@ class KeysightB2902B:
                 pass
         finally:
             self._close_temp(smu, temporary)
-
-    def prepare_contact_probe(
-        self,
-        voltage: float,
-        compliance: float,
-        adr: str | None = None,
-    ) -> None:
-        """Prepare a steady voltage bias for contact-current probing."""
-        smu, temporary = self._get_session(adr=adr, timeout=10000)
-        try:
-            self.connect_switch_path()
-            smu.write("*RST")
-            smu.write("*CLS")
-            self._ensure_front_terminal(smu)
-            self._configure_simple_read("VOLT", ("CURR", "VOLT"), smu)
-            smu.write(f":SENS{self._channel_suffix}:CURR:PROT {float(compliance):.12g}")
-            smu.write(f":SOUR{self._channel_suffix}:VOLT:RANG:AUTO ON")
-            smu.write(f":SENS{self._channel_suffix}:CURR:RANG:AUTO ON")
-            smu.write(":FORM:ELEM:SENS VOLT,CURR")
-            smu.write(f":SOUR{self._channel_suffix}:VOLT {float(voltage):.12g}")
-            smu.write(f":OUTP{self._channel_suffix} ON")
-        finally:
-            self._close_temp(smu, temporary)
-
-    def get_contact_current(
-        self,
-        voltage: float,
-        compliance: float = 10e-6,
-        adr: str | None = None,
-    ) -> float:
-        """Apply one voltage bias and return the absolute measured current."""
-        records = self.hold_voltage_measure_current(
-            voltage=voltage,
-            current_compliance=compliance,
-            settle_s=0.02,
-            read_count=1,
-            reset=True,
-            adr=adr,
-        )
-        if not records:
-            return 0.0
-        value = records[0].get("Current (A)")
-        return abs(float(value)) if value is not None else 0.0
-
-    def get_contact_current_fast(
-        self,
-        voltage: float,
-        adr: str | None = None,
-        settle: float = 0.02,
-    ) -> float:
-        """Read absolute current quickly assuming the instrument is configured."""
-        smu, temporary = self._get_session(adr=adr, timeout=5000)
-        try:
-            self._ensure_front_terminal(smu)
-            smu.write(f":SOUR{self._channel_suffix}:VOLT {float(voltage):.12g}")
-            smu.write(f":OUTP{self._channel_suffix} ON")
-            if settle > 0:
-                time.sleep(settle)
-
-            current = self._query_scalar(f":MEAS:CURR? {self._channel_list}", smu=smu)
-            if current is None:
-                _voltage, current = self._measure_spot_voltage_current(smu=smu)
-            return abs(float(current)) if current is not None else 0.0
-        finally:
-            try:
-                smu.write(f":OUTP{self._channel_suffix} OFF")
-            except Exception:
-                pass
-            self._close_temp(smu, temporary)
-
-    def read_current_at_voltage(
-        self,
-        voltage: float,
-        current_compliance: float = 10e-6,
-        delay_s: float = 0.02,
-        **kwargs: Any,
-    ) -> float:
-        """Legacy helper that returns measured current at one voltage point."""
-        records = self.hold_voltage_measure_current(
-            voltage=voltage,
-            current_compliance=current_compliance,
-            settle_s=delay_s,
-            read_count=1,
-            reset=bool(kwargs.get("reset", True)),
-            adr=kwargs.get("adr"),
-        )
-        if not records:
-            return 0.0
-        value = records[0].get("Current (A)")
-        return float(value) if value is not None else 0.0
-
-    def measure_resistance(
-        self,
-        voltage: float = 0.1,
-        current_compliance: float = 10e-6,
-        delay_s: float = 0.02,
-        **kwargs: Any,
-    ) -> float:
-        """Legacy helper that estimates resistance from a one-point IV reading."""
-        current = self.read_current_at_voltage(
-            voltage=voltage,
-            current_compliance=current_compliance,
-            delay_s=delay_s,
-            **kwargs,
-        )
-        if current == 0:
-            return float("inf")
-        return float(voltage) / current
-
-    def pulsed_measurement(
-        self,
-        csv_path: str | None,
-        current_compliance: float | None = None,
-        set_width: float = 0.01,
-        bare_list: Sequence[float] | None = None,
-        set_acquire_delay: float | None = None,
-        adr: str | None = None,
-        compliance: float | None = None,
-        pulse_width: float | None = None,
-        current_autorange: bool = False,
-    ) -> list[dict[str, float | None]]:
-        """Deprecated compound wrapper delegated to SourceMeasureUnit."""
-        return self._delegate_protocol_method(
-            "pulsed_measurement",
-            csv_path=csv_path,
-            current_compliance=current_compliance,
-            set_width=set_width,
-            bare_list=bare_list,
-            set_acquire_delay=set_acquire_delay,
-            adr=adr,
-            compliance=compliance,
-            pulse_width=pulse_width,
-            current_autorange=current_autorange,
-        )
-
-    def response_dealer(self, raw_response: str) -> dict[str, list[float]]:
-        """Deprecated parsing helper delegated to SourceMeasureUnit."""
-        return self._delegate_protocol_method("response_dealer", raw_response)
-
-    def split_pulse_for_2_chan(
-        self,
-        vlist: Sequence[float],
-    ) -> tuple[list[float], list[float]]:
-        """Deprecated pulse-splitting helper delegated to SourceMeasureUnit."""
-        return self._delegate_protocol_method("split_pulse_for_2_chan", vlist)
 
     def hold_voltage_measure_current(
         self,
@@ -1189,6 +1127,155 @@ class KeysightB2902B:
             except Exception:
                 pass
             self._close_temp(smu, temporary)
+
+    ######---LEGACY / COMPATIBILITY HELPERS (SAFE TO IGNORE FOR CLEAN DRIVER PORTS)---######
+
+    def prepare_contact_probe(
+        self,
+        voltage: float,
+        compliance: float,
+        adr: str | None = None,
+    ) -> None:
+        """Prepare a steady voltage bias for contact-current probing.
+        Legacy helper that can be used when you don't have access to the main session object."""
+        smu, temporary = self._get_session(adr=adr, timeout=10000)
+        try:
+            self.connect_switch_path()
+            smu.write("*RST")
+            smu.write("*CLS")
+            self._ensure_front_terminal(smu)
+            self._configure_simple_read("VOLT", ("CURR", "VOLT"), smu)
+            smu.write(f":SENS{self._channel_suffix}:CURR:PROT {float(compliance):.12g}")
+            smu.write(f":SOUR{self._channel_suffix}:VOLT:RANG:AUTO ON")
+            smu.write(f":SENS{self._channel_suffix}:CURR:RANG:AUTO ON")
+            smu.write(":FORM:ELEM:SENS VOLT,CURR")
+            smu.write(f":SOUR{self._channel_suffix}:VOLT {float(voltage):.12g}")
+            smu.write(f":OUTP{self._channel_suffix} ON")
+        finally:
+            self._close_temp(smu, temporary)
+
+    def get_contact_current(
+        self,
+        voltage: float,
+        compliance: float = 10e-6,
+        adr: str | None = None,
+    ) -> float:
+        """Apply one voltage bias and return the absolute measured current."""
+        records = self.hold_voltage_measure_current(
+            voltage=voltage,
+            current_compliance=compliance,
+            settle_s=0.02,
+            read_count=1,
+            reset=True,
+            adr=adr,
+        )
+        if not records:
+            return 0.0
+        value = records[0].get("Current (A)")
+        return abs(float(value)) if value is not None else 0.0
+
+    def get_contact_current_fast(
+        self,
+        voltage: float,
+        adr: str | None = None,
+        settle: float = 0.02,
+    ) -> float:
+        """Read absolute current quickly assuming the instrument is configured."""
+        smu, temporary = self._get_session(adr=adr, timeout=5000)
+        try:
+            self._ensure_front_terminal(smu)
+            smu.write(f":SOUR{self._channel_suffix}:VOLT {float(voltage):.12g}")
+            smu.write(f":OUTP{self._channel_suffix} ON")
+            if settle > 0:
+                time.sleep(settle)
+
+            current = self._query_scalar(f":MEAS:CURR? {self._channel_list}", smu=smu)
+            if current is None:
+                _voltage, current = self._measure_spot_voltage_current(smu=smu)
+            return abs(float(current)) if current is not None else 0.0
+        finally:
+            try:
+                smu.write(f":OUTP{self._channel_suffix} OFF")
+            except Exception:
+                pass
+            self._close_temp(smu, temporary)
+
+    def read_current_at_voltage(
+        self,
+        voltage: float,
+        current_compliance: float = 10e-6,
+        delay_s: float = 0.02,
+        **kwargs: Any,
+    ) -> float:
+        """Legacy helper that returns measured current at one voltage point."""
+        records = self.hold_voltage_measure_current(
+            voltage=voltage,
+            current_compliance=current_compliance,
+            settle_s=delay_s,
+            read_count=1,
+            reset=bool(kwargs.get("reset", True)),
+            adr=kwargs.get("adr"),
+        )
+        if not records:
+            return 0.0
+        value = records[0].get("Current (A)")
+        return float(value) if value is not None else 0.0
+
+    def measure_resistance(
+        self,
+        voltage: float = 0.1,
+        current_compliance: float = 10e-6,
+        delay_s: float = 0.02,
+        **kwargs: Any,
+    ) -> float:
+        """Legacy helper that estimates resistance from a one-point IV reading."""
+        current = self.read_current_at_voltage(
+            voltage=voltage,
+            current_compliance=current_compliance,
+            delay_s=delay_s,
+            **kwargs,
+        )
+        if current == 0:
+            return float("inf")
+        return float(voltage) / current
+
+    def pulsed_measurement(
+        self,
+        csv_path: str | None,
+        current_compliance: float | None = None,
+        set_width: float = 0.01,
+        bare_list: Sequence[float] | None = None,
+        set_acquire_delay: float | None = None,
+        adr: str | None = None,
+        compliance: float | None = None,
+        pulse_width: float | None = None,
+        current_autorange: bool = False,
+    ) -> list[dict[str, float | None]]:
+        """Deprecated compound wrapper delegated to SourceMeasureUnit."""
+        return self._delegate_protocol_method(
+            "pulsed_measurement",
+            csv_path=csv_path,
+            current_compliance=current_compliance,
+            set_width=set_width,
+            bare_list=bare_list,
+            set_acquire_delay=set_acquire_delay,
+            adr=adr,
+            compliance=compliance,
+            pulse_width=pulse_width,
+            current_autorange=current_autorange,
+        )
+
+    def response_dealer(self, raw_response: str) -> dict[str, list[float]]:
+        """Deprecated parsing helper delegated to SourceMeasureUnit."""
+        return self._delegate_protocol_method("response_dealer", raw_response)
+
+    def split_pulse_for_2_chan(
+        self,
+        vlist: Sequence[float],
+    ) -> tuple[list[float], list[float]]:
+        """Deprecated pulse-splitting helper delegated to SourceMeasureUnit.
+        This was previously used for splitting the pulse train by polarity for multiplexer-board v1."""
+        return self._delegate_protocol_method("split_pulse_for_2_chan", vlist)
 
 
 class KeysightSMU(KeysightB2902B):

@@ -13,8 +13,9 @@ import serial
 import time
 
 class Multiplexer():
+    """Control the Arduino-based multiplexer used for channel switching."""
 
-    def connect_mux(self):
+    def connect_mux(self) -> serial.Serial | None:
         """Connects to the Arduino on serial port COM3 with baudrate 9600.
     
         Returns:
@@ -28,12 +29,13 @@ class Multiplexer():
             print(f"Error connecting to Arduino: {e}")
             return None
 
-    def disconnect_mux(self):
+    def disconnect_mux(self) -> None:
+        """Close the active serial connection to the multiplexer, if present."""
         if self.ser is not None:
             self.ser.close()
             print("Disconnected from Arduino.")        
 
-    def send_command(self, command, ser=None):
+    def send_command(self, command, ser=None) -> list[str] | None:
         """Sends a command to the Arduino and reads multiple lines of response.
     
         Args:
@@ -68,7 +70,7 @@ class Multiplexer():
             print("Error: Not connected to Arduino.")
             return None
         
-    def channel_to_command(self, ch1, ch2, ser=None):
+    def channel_to_command(self, ch1, ch2, ser=None) -> bool:
         """
         Converts pins (1 to 16) for both the channels to commands and sends it.
         ----------

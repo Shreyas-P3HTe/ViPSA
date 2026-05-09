@@ -35,9 +35,15 @@ class Crossbar_Methods():
     @staticmethod
     def _supports_kwarg(callable_obj, kwarg_name):
         try:
-            return kwarg_name in inspect.signature(callable_obj).parameters
+            parameters = inspect.signature(callable_obj).parameters
         except (TypeError, ValueError):
             return False
+        if kwarg_name in parameters:
+            return True
+        return any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        )
 
     def _call_with_supported_kwargs(self, callable_obj, *args, **kwargs):
         supported_kwargs = {

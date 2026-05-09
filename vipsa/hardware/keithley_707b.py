@@ -60,7 +60,7 @@ class Keithley707B:
 		self.route_map = dict(self.ROUTE_MAP)
 		self._dev = None
 
-	def _open_device(self):
+	def _open_device(self) -> Any:
 		"""Open the VISA session lazily and return it.
 
 		The 707B session is opened on first use so callers can construct the

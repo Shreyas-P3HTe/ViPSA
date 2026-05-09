@@ -127,7 +127,7 @@ class Zaber:
         self.velocity_units = velocity_units
         self.acceleration_units = acceleration_units
 
-    def _require_axis(self, axis_name: str):
+    def _require_axis(self, axis_name: str) -> object:
         """Return the cached axis object, raising a helpful error if needed."""
 
         axis = getattr(self, axis_name, None)

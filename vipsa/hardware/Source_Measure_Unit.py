@@ -378,99 +378,6 @@ class SourceMeasureUnit:
 
 		return segments
 
-	def split_pulse_for_2_chan(
-		self,
-		vlist: Sequence[float],
-	) -> tuple[list[float], list[float]]:
-		"""Split signed voltages into positive-channel and negative-channel lists."""
-		vlist_p: list[float] = []
-		vlist_n: list[float] = []
-
-		for voltage in [float(value) for value in vlist]:
-			if voltage >= 0:
-				vlist_p.append(voltage)
-				vlist_n.append(0.0)
-			else:
-				vlist_p.append(0.0)
-				vlist_n.append(abs(voltage))
-
-		return vlist_p, vlist_n
-
-	def response_dealer(self, raw_response: str) -> dict[str, list[float]]:
-		"""Parse a raw comma-separated source/current/time string."""
-		results = {"Source": [], "Current": [], "Time": []}
-		split_arr = [item.strip() for item in raw_response.split(",") if item.strip()]
-
-		for index, value in enumerate(split_arr):
-			numeric = float(value)
-			if np.mod(index, 3) == 0:
-				results["Source"].append(numeric)
-			elif np.mod(index, 3) == 1:
-				results["Current"].append(numeric)
-			else:
-				results["Time"].append(numeric)
-
-		return results
-
-	def simple_IV_sweep(
-		self,
-		vstart: float,
-		vstop: float,
-		vstep: float,
-		compliance: float,
-		delay: float,
-		adr: str | None = None,
-		current_autorange: bool = False,
-	) -> np.ndarray:
-		"""Run a simple linear IV sweep using the universal driver primitive."""
-		if vstep == 0:
-			raise ValueError("vstep must be non-zero.")
-
-		stop_correction = np.sign(vstep) * 0.5 * abs(vstep)
-		voltages = np.arange(vstart, vstop + stop_correction, vstep, dtype=float).tolist()
-
-		records = self.driver.source_voltage_measure_current(
-			voltages=voltages,
-			current_compliance=float(compliance),
-			delay_s=float(delay),
-			reset=True,
-			adr=adr,
-			use_auto_current_range=bool(current_autorange),
-		)
-		compatibility_records = self._driver_records_to_compatibility(records)
-		return self.records_to_legacy_array(compatibility_records)
-
-	def list_IV_sweep_manual(
-		self,
-		csv_path: str,
-		pos_compliance: float,
-		neg_compliance: float,
-		delay: float | None = None,
-		adr: str | None = None,
-	) -> np.ndarray:
-		"""Run a manual point-by-point voltage list using driver primitives."""
-		voltages, times = self._coerce_voltage_list(csv_path=csv_path, bare_list=None)
-		resolved_delay, _ = self._resolve_delay_and_acq(times, delay, None)
-
-		records: list[dict[str, float | None]] = []
-		start_time = time.perf_counter()
-
-		for index, voltage in enumerate(voltages):
-			compliance = pos_compliance if voltage >= 0 else neg_compliance
-			point_records = self.driver.hold_voltage_measure_current(
-				voltage=float(voltage),
-				current_compliance=float(compliance),
-				settle_s=max(0.0, resolved_delay),
-				read_count=1,
-				reset=(index == 0),
-				adr=adr,
-			)
-			point = self._driver_records_to_compatibility(point_records)[0]
-			point["Time(T)"] = time.perf_counter() - start_time
-			records.append(point)
-
-		return self.records_to_legacy_array(records)
-
 	def scan_read_vlist(
 		self,
 		dev: Any,
@@ -680,6 +587,101 @@ class SourceMeasureUnit:
 			current_autorange=bool(current_autorange),
 			adr=adr,
 		)
+
+	######---LEGACY / COMPATIBILITY HELPERS (SAFE TO IGNORE FOR CLEAN DRIVER PORTS)---######
+
+	def split_pulse_for_2_chan(
+		self,
+		vlist: Sequence[float],
+	) -> tuple[list[float], list[float]]:
+		"""Split signed voltages into positive-channel and negative-channel lists."""
+		vlist_p: list[float] = []
+		vlist_n: list[float] = []
+
+		for voltage in [float(value) for value in vlist]:
+			if voltage >= 0:
+				vlist_p.append(voltage)
+				vlist_n.append(0.0)
+			else:
+				vlist_p.append(0.0)
+				vlist_n.append(abs(voltage))
+
+		return vlist_p, vlist_n
+
+	def response_dealer(self, raw_response: str) -> dict[str, list[float]]:
+		"""Parse a raw comma-separated source/current/time string."""
+		results = {"Source": [], "Current": [], "Time": []}
+		split_arr = [item.strip() for item in raw_response.split(",") if item.strip()]
+
+		for index, value in enumerate(split_arr):
+			numeric = float(value)
+			if np.mod(index, 3) == 0:
+				results["Source"].append(numeric)
+			elif np.mod(index, 3) == 1:
+				results["Current"].append(numeric)
+			else:
+				results["Time"].append(numeric)
+
+		return results
+
+	def simple_IV_sweep(
+		self,
+		vstart: float,
+		vstop: float,
+		vstep: float,
+		compliance: float,
+		delay: float,
+		adr: str | None = None,
+		current_autorange: bool = False,
+	) -> np.ndarray:
+		"""Run a simple linear IV sweep using the universal driver primitive."""
+		if vstep == 0:
+			raise ValueError("vstep must be non-zero.")
+
+		stop_correction = np.sign(vstep) * 0.5 * abs(vstep)
+		voltages = np.arange(vstart, vstop + stop_correction, vstep, dtype=float).tolist()
+
+		records = self.driver.source_voltage_measure_current(
+			voltages=voltages,
+			current_compliance=float(compliance),
+			delay_s=float(delay),
+			reset=True,
+			adr=adr,
+			use_auto_current_range=bool(current_autorange),
+		)
+		compatibility_records = self._driver_records_to_compatibility(records)
+		return self.records_to_legacy_array(compatibility_records)
+
+	def list_IV_sweep_manual(
+		self,
+		csv_path: str,
+		pos_compliance: float,
+		neg_compliance: float,
+		delay: float | None = None,
+		adr: str | None = None,
+	) -> np.ndarray:
+		"""Run a manual point-by-point voltage list using driver primitives."""
+		voltages, times = self._coerce_voltage_list(csv_path=csv_path, bare_list=None)
+		resolved_delay, _ = self._resolve_delay_and_acq(times, delay, None)
+
+		records: list[dict[str, float | None]] = []
+		start_time = time.perf_counter()
+
+		for index, voltage in enumerate(voltages):
+			compliance = pos_compliance if voltage >= 0 else neg_compliance
+			point_records = self.driver.hold_voltage_measure_current(
+				voltage=float(voltage),
+				current_compliance=float(compliance),
+				settle_s=max(0.0, resolved_delay),
+				read_count=1,
+				reset=(index == 0),
+				adr=adr,
+			)
+			point = self._driver_records_to_compatibility(point_records)[0]
+			point["Time(T)"] = time.perf_counter() - start_time
+			records.append(point)
+
+		return self.records_to_legacy_array(records)
 
 	def general_channel_pulsing(
 		self,

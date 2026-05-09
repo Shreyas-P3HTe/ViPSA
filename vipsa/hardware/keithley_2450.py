@@ -16,6 +16,7 @@ class _NullVisaSession:
 	"""No-op VISA session used only when PyVISA is unavailable in test imports."""
 
 	def __init__(self, address: str) -> None:
+		"""Store connection metadata for the no-op test session."""
 		self.address = address
 		self.timeout = None
 		self.read_termination = "\n"
@@ -23,9 +24,11 @@ class _NullVisaSession:
 		self.writes: list[str] = []
 
 	def write(self, command: str) -> None:
+		"""Record a command without talking to real hardware."""
 		self.writes.append(command)
 
 	def query(self, command: str) -> str:
+		"""Record a query and return canned responses for common SCPI calls."""
 		self.writes.append(command)
 		if command == "*IDN?":
 			return "NO_PYVISA,KEITHLEY2450,0,0"
@@ -42,6 +45,7 @@ class _NullVisaSession:
 		return "0"
 
 	def close(self) -> None:
+		"""Mirror the VISA close API for dry-run callers."""
 		return None
 
 
@@ -49,13 +53,15 @@ class _NullResourceManager:
 	"""No-op resource manager used when tests stub ``pyvisa`` without a backend."""
 
 	def list_resources(self) -> tuple[str, ...]:
+		"""Return a fake VISA resource list for import-time checks."""
 		return ("USB0::FAKE::INSTR",)
 
 	def open_resource(self, address: str) -> _NullVisaSession:
+		"""Create a no-op session for the requested instrument address."""
 		return _NullVisaSession(address)
 
 
-def _resource_manager():
+def _resource_manager() -> Any:
 	"""Return a real ResourceManager when available, else a no-op test fallback."""
 	factory = getattr(pyvisa, "ResourceManager", None)
 	if callable(factory):
@@ -129,7 +135,7 @@ class Keithley2450:
 
 		self.initialize()
 
-	def _open_resource(self, adr: str | None = None, timeout: int = 10000):
+	def _open_resource(self, adr: str | None = None, timeout: int = 10000) -> Any:
 		"""Open a VISA resource and apply common session settings."""
 		target = self.address if adr is None else adr
 		smu = self.rm.open_resource(target)
@@ -138,7 +144,7 @@ class Keithley2450:
 		smu.timeout = timeout
 		return smu
 
-	def _get_session(self, adr: str | None = None, timeout: int = 10000):
+	def _get_session(self, adr: str | None = None, timeout: int = 10000) -> tuple[Any, bool]:
 		"""Return the main session or open a short-lived one for another address."""
 		target = self.address if adr is None else adr
 		if target == self.address:
@@ -261,7 +267,7 @@ class Keithley2450:
 		)
 		setattr(self, attr_name, True)
 
-	def _build_orchestration_adapter(self):
+	def _build_orchestration_adapter(self) -> Any:
 		"""Create a temporary orchestration wrapper around this live driver."""
 		existing = getattr(self, "orchestrator", None)
 		if existing is not None:
@@ -279,7 +285,7 @@ class Keithley2450:
 			handler.resistance_df = self.resistance_df
 		return handler
 
-	def _delegate_protocol_method(self, method_name: str, *args: Any, **kwargs: Any):
+	def _delegate_protocol_method(self, method_name: str, *args: Any, **kwargs: Any) -> Any:
 		"""Delegate a compound measurement helper to SourceMeasureUnit."""
 		self._warn_deprecated_protocol(method_name)
 		handler = self._build_orchestration_adapter()
@@ -542,144 +548,6 @@ class Keithley2450:
 			self.set_output(False)
 		except Exception:
 			pass
-
-	def prepare_contact_probe(self, voltage: float, compliance: float) -> None:
-		"""Prepare a steady voltage bias for contact-current probing."""
-		self.connect_switch_path()
-		self.initialize()
-		self.set_source_function("VOLT")
-		self.set_sense_function("CURR")
-		self.set_protection("VOLT", compliance)
-		self.set_source_level("VOLT", voltage)
-		self.set_output(True)
-
-	def get_contact_current(
-		self,
-		voltage: float,
-		compliance: float = 0.1,
-		nplc: float = 1.0,
-		settle: float = 0.02,
-		adr: str | None = None,
-	) -> float:
-		"""Apply one voltage bias and return the absolute measured current."""
-		records = self.hold_voltage_measure_current(
-			voltage=voltage,
-			current_compliance=compliance,
-			settle_s=settle,
-			nplc=nplc,
-			read_count=1,
-			reset=True,
-			adr=adr,
-		)
-		if not records:
-			return 0.0
-		value = records[0].get("Current (A)")
-		return abs(float(value)) if value is not None else 0.0
-
-	def get_contact_current_fast(
-		self,
-		voltage: float,
-		settle: float = 0.02,
-	) -> float:
-		"""Read absolute current quickly assuming the instrument is configured."""
-		self.set_source_level("VOLT", voltage)
-		self.set_output(True)
-		if settle > 0:
-			time.sleep(settle)
-		_, current = self._read_measurement_pair(self.smu)
-		return abs(float(current)) if current is not None else 0.0
-
-	def read_current_at_voltage(
-		self,
-		voltage: float,
-		current_compliance: float = 0.1,
-		delay_s: float = 0.02,
-		**kwargs: Any,
-	) -> float:
-		"""Legacy helper that returns measured current at one voltage point."""
-		records = self.hold_voltage_measure_current(
-			voltage=voltage,
-			current_compliance=current_compliance,
-			settle_s=delay_s,
-			read_count=1,
-			reset=bool(kwargs.get("reset", True)),
-			adr=kwargs.get("adr"),
-		)
-		if not records:
-			return 0.0
-		value = records[0].get("Current (A)")
-		return float(value) if value is not None else 0.0
-
-	def measure_resistance(
-		self,
-		voltage: float = 0.1,
-		current_compliance: float = 0.1,
-		delay_s: float = 0.02,
-		**kwargs: Any,
-	) -> float:
-		"""Legacy helper that estimates resistance from a one-point IV reading."""
-		current = self.read_current_at_voltage(
-			voltage=voltage,
-			current_compliance=current_compliance,
-			delay_s=delay_s,
-			**kwargs,
-		)
-		if current == 0:
-			return float("inf")
-		return float(voltage) / current
-
-	def pulsed_measurement(
-		self,
-		csv_path: str | None,
-		current_compliance: float,
-		set_width: float = 0.01,
-		bare_list: Sequence[float] | None = None,
-		set_acquire_delay: float | None = None,
-		adr: str | None = None,
-		current_autorange: bool = False,
-	) -> list[dict[str, float | None]]:
-		"""Deprecated compound wrapper delegated to SourceMeasureUnit."""
-		return self._delegate_protocol_method(
-			"pulsed_measurement",
-			csv_path=csv_path,
-			current_compliance=current_compliance,
-			set_width=set_width,
-			bare_list=bare_list,
-			set_acquire_delay=set_acquire_delay,
-			adr=adr,
-			current_autorange=current_autorange,
-		)
-
-	def run_read_probe(self, *args: Any, **kwargs: Any) -> None:
-		"""Legacy placeholder for handler-level read-probe orchestration."""
-		self._warn_deprecated_protocol("run_read_probe")
-		return None
-
-	def identify_linear_segments(self, *args: Any, **kwargs: Any) -> None:
-		"""Legacy placeholder for handler-level linear segment detection."""
-		self._warn_deprecated_protocol("identify_linear_segments")
-		return None
-
-	def split_by_polarity(self, *args: Any, **kwargs: Any) -> Any:
-		"""Deprecated polarity splitter delegated to SourceMeasureUnit."""
-		return self._delegate_protocol_method("split_list", *args, **kwargs)
-
-	def split_sweep_by_4(self, *args: Any, **kwargs: Any) -> Any:
-		"""Deprecated four-way splitter delegated to SourceMeasureUnit."""
-		return self._delegate_protocol_method("split_list_by_4", *args, **kwargs)
-
-	def list_IV_sweep_split_4(self, *args: Any, **kwargs: Any) -> Any:
-		"""Deprecated compound wrapper delegated to SourceMeasureUnit."""
-		return self._delegate_protocol_method("list_IV_sweep_split_4", *args, **kwargs)
-
-	def run_linear_segment(self, *args: Any, **kwargs: Any) -> None:
-		"""Legacy placeholder for handler-level linear segment execution."""
-		self._warn_deprecated_protocol("run_linear_segment")
-		return None
-
-	def list_IV_sweep_split(self, *args: Any, **kwargs: Any) -> Any:
-		"""Deprecated compound wrapper delegated to SourceMeasureUnit."""
-		return self._delegate_protocol_method("list_IV_sweep_split", *args, **kwargs)
 
 	def hold_voltage_measure_current(
 		self,
@@ -985,6 +853,146 @@ class Keithley2450:
 			adr=adr,
 			use_auto_current_range=current_autorange,
 		)
+
+	######---LEGACY / COMPATIBILITY HELPERS (SAFE TO IGNORE FOR CLEAN DRIVER PORTS)---######
+
+	def prepare_contact_probe(self, voltage: float, compliance: float) -> None:
+		"""Prepare a steady voltage bias for contact-current probing."""
+		self.connect_switch_path()
+		self.initialize()
+		self.set_source_function("VOLT")
+		self.set_sense_function("CURR")
+		self.set_protection("VOLT", compliance)
+		self.set_source_level("VOLT", voltage)
+		self.set_output(True)
+
+	def get_contact_current(
+		self,
+		voltage: float,
+		compliance: float = 0.1,
+		nplc: float = 1.0,
+		settle: float = 0.02,
+		adr: str | None = None,
+	) -> float:
+		"""Apply one voltage bias and return the absolute measured current."""
+		records = self.hold_voltage_measure_current(
+			voltage=voltage,
+			current_compliance=compliance,
+			settle_s=settle,
+			nplc=nplc,
+			read_count=1,
+			reset=True,
+			adr=adr,
+		)
+		if not records:
+			return 0.0
+		value = records[0].get("Current (A)")
+		return abs(float(value)) if value is not None else 0.0
+
+	def get_contact_current_fast(
+		self,
+		voltage: float,
+		settle: float = 0.02,
+	) -> float:
+		"""Read absolute current quickly assuming the instrument is configured."""
+		self.set_source_level("VOLT", voltage)
+		self.set_output(True)
+		if settle > 0:
+			time.sleep(settle)
+		_, current = self._read_measurement_pair(self.smu)
+		return abs(float(current)) if current is not None else 0.0
+
+	def read_current_at_voltage(
+		self,
+		voltage: float,
+		current_compliance: float = 0.1,
+		delay_s: float = 0.02,
+		**kwargs: Any,
+	) -> float:
+		"""Legacy helper that returns measured current at one voltage point."""
+		records = self.hold_voltage_measure_current(
+			voltage=voltage,
+			current_compliance=current_compliance,
+			settle_s=delay_s,
+			read_count=1,
+			reset=bool(kwargs.get("reset", True)),
+			adr=kwargs.get("adr"),
+		)
+		if not records:
+			return 0.0
+		value = records[0].get("Current (A)")
+		return float(value) if value is not None else 0.0
+
+	def measure_resistance(
+		self,
+		voltage: float = 0.1,
+		current_compliance: float = 0.1,
+		delay_s: float = 0.02,
+		**kwargs: Any,
+	) -> float:
+		"""Legacy helper that estimates resistance from a one-point IV reading."""
+		current = self.read_current_at_voltage(
+			voltage=voltage,
+			current_compliance=current_compliance,
+			delay_s=delay_s,
+			**kwargs,
+		)
+		if current == 0:
+			return float("inf")
+		return float(voltage) / current
+
+	def pulsed_measurement(
+		self,
+		csv_path: str | None,
+		current_compliance: float,
+		set_width: float = 0.01,
+		bare_list: Sequence[float] | None = None,
+		set_acquire_delay: float | None = None,
+		adr: str | None = None,
+		current_autorange: bool = False,
+	) -> list[dict[str, float | None]]:
+		"""Deprecated compound wrapper delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method(
+			"pulsed_measurement",
+			csv_path=csv_path,
+			current_compliance=current_compliance,
+			set_width=set_width,
+			bare_list=bare_list,
+			set_acquire_delay=set_acquire_delay,
+			adr=adr,
+			current_autorange=current_autorange,
+		)
+
+	def run_read_probe(self, *args: Any, **kwargs: Any) -> None:
+		"""Legacy placeholder for handler-level read-probe orchestration."""
+		self._warn_deprecated_protocol("run_read_probe")
+		return None
+
+	def identify_linear_segments(self, *args: Any, **kwargs: Any) -> None:
+		"""Legacy placeholder for handler-level linear segment detection."""
+		self._warn_deprecated_protocol("identify_linear_segments")
+		return None
+
+	def split_by_polarity(self, *args: Any, **kwargs: Any) -> Any:
+		"""Deprecated polarity splitter delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method("split_list", *args, **kwargs)
+
+	def split_sweep_by_4(self, *args: Any, **kwargs: Any) -> Any:
+		"""Deprecated four-way splitter delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method("split_list_by_4", *args, **kwargs)
+
+	def list_IV_sweep_split_4(self, *args: Any, **kwargs: Any) -> Any:
+		"""Deprecated compound wrapper delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method("list_IV_sweep_split_4", *args, **kwargs)
+
+	def run_linear_segment(self, *args: Any, **kwargs: Any) -> None:
+		"""Legacy placeholder for handler-level linear segment execution."""
+		self._warn_deprecated_protocol("run_linear_segment")
+		return None
+
+	def list_IV_sweep_split(self, *args: Any, **kwargs: Any) -> Any:
+		"""Deprecated compound wrapper delegated to SourceMeasureUnit."""
+		return self._delegate_protocol_method("list_IV_sweep_split", *args, **kwargs)
 
 
 class KeithleySMU(Keithley2450):

@@ -12,6 +12,12 @@ Created on Mon Sep  5 13:30:54 2022
 @author: darre
 
 Library for B2912A
+
+LEGACY NOTE:
+This module predates the current driver/orchestration split used by
+`keysight_b2902b.py`, `keithley_2450.py`, and `Source_Measure_Unit.py`.
+Treat the functions below as archived experimental helpers rather than the
+canonical SMU driver path for new Agentic-AI integrations.
 """
 
 import pyvisa
@@ -19,7 +25,10 @@ from time import sleep
 import numpy as np
 import logging as log
 
-def sync(dev):
+
+######---LEGACY EXPERIMENTAL HELPERS (ARCHIVED IMPLEMENTATION)---######
+
+def sync(dev) -> None:
     
     """
     For synchronisation.
@@ -31,7 +40,7 @@ def sync(dev):
     log.info(opc)
     
 
-def send_pulse(dev,set_voltage,set_width,set_acquire_delay,read_voltage,read_width,read_acquire_delay,low,current_compliance,set_range):
+def send_pulse(dev,set_voltage,set_width,set_acquire_delay,read_voltage,read_width,read_acquire_delay,low,current_compliance,set_range) -> float:
 
     """
     Sends 4 pulses -> set, rest (0V), read, rest (0V)
@@ -148,7 +157,13 @@ def send_pulse(dev,set_voltage,set_width,set_acquire_delay,read_voltage,read_wid
 
     pass
 
-def setup_for_pulse(dev,nplc):
+def setup_for_pulse(dev,nplc) -> None:
+    """
+    Placeholder for configuring pulse-mode measurement aperture settings.
+
+    The legacy B2912A helper does not currently implement this setup
+    sequence, but the stub is kept as an integration hook for callers.
+    """
 
     pass
 
@@ -163,7 +178,13 @@ def setup_for_pulse(dev,nplc):
 
     pass
 
-def list_sweep(dev,list_v,compliance,dc_nplc,pulse_nplc):
+def list_sweep(dev,list_v,compliance,dc_nplc,pulse_nplc) -> None:
+    """
+    Run a list-mode voltage sweep and return the fetched response payload.
+
+    The instrument is reset, configured to source the supplied voltage list,
+    and set to measure current for each list point.
+    """
 
     # Set up for dc
 
@@ -267,7 +288,7 @@ def list_sweep(dev,list_v,compliance,dc_nplc,pulse_nplc):
 
 
     
-def set_settings_current_dlts(dev,current_range,fill_voltage,reverse_bias_voltage,measurement_interval):
+def set_settings_current_dlts(dev,current_range,fill_voltage,reverse_bias_voltage,measurement_interval) -> None:
     
     """
     General settings for pulsed measurement.
@@ -348,7 +369,13 @@ def set_settings_current_dlts(dev,current_range,fill_voltage,reverse_bias_voltag
 
     
     
-def get_current_range(dev,fill_voltage,initial_range):
+def get_current_range(dev,fill_voltage,initial_range) -> float:
+    """
+    Estimate a usable transient current range from a bias measurement.
+
+    The helper applies ``fill_voltage`` with the requested upper current range,
+    performs a reading, and returns the smallest matching transient range.
+    """
     
     if initial_range < 1E-8:
         return 10
@@ -431,7 +458,7 @@ def get_current_range(dev,fill_voltage,initial_range):
 
 
 
-def start_measurement(dev,fill_duration,reverse_bias_voltage,current_range):
+def start_measurement(dev,fill_duration,reverse_bias_voltage,current_range) -> None:
     
     """
     Trap-filling and transient capture process done in this function.
@@ -458,7 +485,13 @@ def start_measurement(dev,fill_duration,reverse_bias_voltage,current_range):
     
 
     
-def get_dlts_data(dev,current_range):
+def get_dlts_data(dev,current_range) -> dict[str, list[str | float]]:
+    """
+    Read buffered DLTS trace data and label each sample with its range.
+
+    Returns a dictionary containing time, current, and the applied current
+    range for each fetched sample.
+    """
 
     dev.write(":TRAC1:FEED:CONT NEV")
     dev.write(":TRAC1:DATA?")
@@ -497,12 +530,19 @@ def get_dlts_data(dev,current_range):
     
     return datadict
 
-def get_error(dev):
+def get_error(dev) -> None:
+    """Read and log the instrument error queue."""
     
     dev.write(":SYST:ERR:ALL?")
     log.error(dev.read())
     
-def get_transient_current_range(max_current, current_range):
+def get_transient_current_range(max_current, current_range) -> float:
+    """
+    Reduce the current range recursively until it matches the measured signal.
+
+    The returned range is the smallest decade range that still covers
+    ``max_current``.
+    """
     
     if max_current < current_range/10:
         newrange = get_transient_current_range(max_current,current_range/10)
