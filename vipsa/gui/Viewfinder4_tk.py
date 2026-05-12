@@ -1543,13 +1543,24 @@ class VipsaGUI:
         if chunk is None:
             return
 
-        try:
-            rows = list(chunk.tolist()) if hasattr(chunk, "tolist") else list(chunk)
-        except Exception:
+        if isinstance(chunk, dict):
+            rows = [chunk]
+        elif isinstance(chunk, (int, float)):
+            return
+        elif (
+            isinstance(chunk, (list, tuple))
+            and chunk
+            and all(isinstance(item, dict) for item in chunk)
+        ):
+            rows = list(chunk)
+        else:
             try:
-                rows = list(chunk)
-            except TypeError:
-                return
+                rows = list(chunk.tolist()) if hasattr(chunk, "tolist") else list(chunk)
+            except Exception:
+                try:
+                    rows = list(chunk)
+                except TypeError:
+                    return
         if not rows:
             return
 
@@ -1558,10 +1569,18 @@ class VipsaGUI:
                 self._reset_live_plot(label)
 
             for row in rows:
-                if not hasattr(row, "__len__") or len(row) < 3:
-                    continue
-                voltage = float(row[1])
-                current = abs(float(row[2]))
+                if isinstance(row, dict):
+                    voltage = row.get("Voltage (V)", row.get("V_cmd (V)", row.get("V_meas (V)")))
+                    current = row.get("Current (A)", row.get("I_meas (A)", row.get("I_cmd (A)")))
+                    if voltage is None or current is None:
+                        continue
+                    voltage = float(voltage)
+                    current = abs(float(current))
+                else:
+                    if not hasattr(row, "__len__") or len(row) < 3:
+                        continue
+                    voltage = float(row[1])
+                    current = abs(float(row[2]))
                 self.live_plot_points.append((voltage, max(current, 1e-15)))
 
             if not self.live_plot_points:

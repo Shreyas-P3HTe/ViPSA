@@ -264,6 +264,8 @@ class ProtocolBuilderTk:
                 if step_type == "DCIV" and not params.get("include_read_probe", True):
                     parts.append("[Read Probe: Off]")
             elif step_type == "PULSE":
+                if params.get("bias_voltage") is not None:
+                    parts.append(f"[Bias: {params.get('bias_voltage')} V]")
                 parts.append(f"[Compliance: {params.get('compliance')}]")
                 parts.append(f"[Width: {params.get('pulse_width')}]")
                 parts.append(f"[SMU: {params.get('smu_select', 'KeysightB2901BL')}]")

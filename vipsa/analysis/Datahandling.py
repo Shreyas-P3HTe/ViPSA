@@ -9,6 +9,7 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
+from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.figure import Figure
 import csv
 import json
@@ -143,6 +144,7 @@ class Data_Handler():
         if managed:
             return plt.subplots(figsize=figsize, dpi=dpi)
         figure = Figure(figsize=figsize, dpi=dpi)
+        FigureCanvasAgg(figure)
         axis = figure.add_subplot(111)
         return figure, axis
 
@@ -307,7 +309,7 @@ class Data_Handler():
             print(f"Warning: plot artifact could not be saved for {csv_path}: {exc}")
         finally:
             if created_figure and figure is not None:
-                plt.close(figure)
+                figure.clear()
 
         return {
             "csv_path": csv_path,

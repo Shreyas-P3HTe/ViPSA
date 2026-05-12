@@ -1486,7 +1486,7 @@ class Vipsa_Methods():
             top_light = getattr(self, 'top_light', None)
 
         selected_smu = SMU
-        if isinstance(SMU, dict):
+        if isinstance(SMU, dict) and str(ctype).strip().upper() != "ALIGN":
             requested_smu = self._infer_protocol_smu_key(
                 ctype,
                 params,

@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-05-12
+
+### Probability-voltage sigmoid workflow updates
+- Reworked `Probability-Voltage Sigmoid` in `vipsa/gui/Testmaker_tk.py` from the earlier bias-stress style export into a dedicated randomized sigmoid generator.
+- Added the new `sigmoid_randomized` pulse generator that builds `set -> 0 -> read -> 0 -> reset -> 0 -> read` loops, applies the sigmoid range to the READ voltage, enforces a negative reset voltage, and records the randomized read-voltage order plus seed in a manifest.
+- Updated the sigmoid defaults, validation, and point-count estimation so Testmaker can reject oversized randomized pulse campaigns before export.
+- Changed sigmoid export from one file per voltage point to one randomized CSV, one protocol JSON, and one manifest JSON for the whole campaign, and refreshed the related UI copy to match the new flow.
+
+### Keysight pulse execution and orchestration hardening
+- Updated `vipsa/hardware/keysight_b2902b.py` so native Keysight pulse-list execution detects incomplete array readback and falls back to timed voltage-list execution instead of silently returning partial data.
+- Expanded `vipsa/hardware/Source_Measure_Unit.py` with incomplete-measurement detection, manual point-by-point fallback paths, and a compact timed-segment runner for large Keysight CSV-backed pulse waveforms.
+- Added CSV timing-based voltage-segment compaction for pulse runs so repeated identical slots can be executed as longer holds instead of always as slot-by-slot points.
+- Split the shared orchestration more clearly between pulse/list execution and voltage-sweep execution, while keeping progress callbacks compatible with the richer normalized record flow.
+
+### GUI, plotting, and protocol-runner compatibility fixes
+- Updated `vipsa/gui/ProtocolEditor_tk.py` to show optional pulse `bias_voltage` metadata in protocol step summaries.
+- Updated `vipsa/gui/Viewfinder4_tk.py` live plotting so it can consume both legacy array-style progress updates and dict-based normalized measurement records.
+- Fixed `vipsa/workflows/Main4.py` so `ALIGN` protocol steps do not try to resolve an SMU from the connected-SMU map, avoiding the `Requested SMU 'None' is not connected` failure on prefix alignment steps.
+- Adjusted `vipsa/analysis/Datahandling.py` to use an Agg-backed figure canvas explicitly and clear standalone figures directly instead of routing cleanup through `plt.close()`.
+
+### Repository housekeeping
+- Normalized the tracked `.codex` file mode from executable to a regular file.
+
+### Verification
+- Passed `python -m py_compile vipsa/analysis/Datahandling.py vipsa/gui/ProtocolEditor_tk.py vipsa/gui/Testmaker_tk.py vipsa/gui/Viewfinder4_tk.py vipsa/hardware/Source_Measure_Unit.py vipsa/hardware/keysight_b2902b.py vipsa/workflows/Main4.py`.
+
 ## 2026-04-28
 
 ### Keysight spot-read overhaul

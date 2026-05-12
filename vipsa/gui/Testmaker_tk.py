@@ -11,6 +11,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import random
 import sys
 import tkinter as tk
 from typing import Dict, List, Tuple
@@ -519,10 +520,10 @@ TEST_CATALOG: List[Dict[str, object]] = [
         "category": "p-bit / TRNG",
         "status": STATUS_READY,
         "mode": MODE_PULSE,
-        "generator": "bias_stress",
+        "generator": "sigmoid_randomized",
         "protocol_type": "PULSE",
-        "description": "Repeated biasing across a voltage range to collect a full probability-voltage sigmoid.",
-        "feasibility": "Single-voltage preview and batch voltage-range export are both supported in this app.",
+        "description": "Randomized set-read-reset-read loops for collecting a probability-voltage sigmoid from a read-bias sweep.",
+        "feasibility": "Supported as one randomized pulse CSV where the sigmoid range is applied to the READ pulse and the reset pulse stays negative.",
         "defaults": {
             "base_width": 0.001,
             "write_voltage": 0.5,
@@ -532,15 +533,15 @@ TEST_CATALOG: List[Dict[str, object]] = [
             "write_width": 0.01,
             "write_gap": 0.005,
             "write_pulses": 1,
-            "read_voltage": 0.1,
+            "read_voltage": 0.0,
             "read_width": 0.001,
             "read_gap": 0.001,
             "read_pulses": 1,
-            "erase_voltage": 0.0,
+            "erase_voltage": -0.5,
             "erase_width": 0.001,
-            "erase_gap": 0.0,
-            "erase_pulses": 0,
-            "pulse_cycles": 200,
+            "erase_gap": 0.001,
+            "erase_pulses": 1,
+            "pulse_cycles": 50,
             "cycle_gap": 0.0,
             "initial_gap": 0.0,
             "final_read_block": False,
@@ -567,6 +568,7 @@ GENERATOR_FUNCTIONS: Dict[str, str] = {
     "dciv_bipolar": "generate_voltage_data",
     "endurance": "generate_endurance_slots",
     "bias_stress": "generate_bias_stress_slots",
+    "sigmoid_randomized": "generate_sigmoid_randomized_slots",
     "ltp_ltd": "generate_ltp_ltd_slots",
     "ppf": "generate_ppf_slots",
     "retention_read": "generate_retention_read_slots",
@@ -1238,6 +1240,90 @@ def generate_retention_read_slots(params: Dict[str, float | int | bool]) -> Tupl
     return build_times_for_slots(len(voltages), base), voltages, notes
 
 
+def generate_sigmoid_randomized_slots(
+    params: Dict[str, float | int | bool],
+    sigmoid_params: Dict[str, float],
+) -> Tuple[List[float], List[float], List[str], Dict[str, object]]:
+    base = float(params["base_width"])
+    write_width = slots_from_seconds(float(params["write_width"]), base)
+    write_gap = max(1, slots_from_seconds(float(params["write_gap"]), base))
+    read_width = slots_from_seconds(float(params["read_width"]), base)
+    read_gap = max(1, slots_from_seconds(float(params["read_gap"]), base))
+    erase_width = slots_from_seconds(float(params["erase_width"]), base)
+    erase_gap = max(1, slots_from_seconds(float(params["erase_gap"]), base))
+    cycle_gap = slots_from_seconds(float(params["cycle_gap"]), base)
+    initial_gap = slots_from_seconds(float(params["initial_gap"]), base)
+
+    read_voltage_points = voltage_series(
+        float(sigmoid_params["sigmoid_start_voltage"]),
+        float(sigmoid_params["sigmoid_stop_voltage"]),
+        float(sigmoid_params["sigmoid_step_voltage"]),
+    )
+    if not read_voltage_points:
+        raise ValueError("No sigmoid read voltages were generated from the selected range.")
+
+    loop_repeats = int(params["pulse_cycles"])
+    read_sequence = [
+        float(read_voltage)
+        for _ in range(loop_repeats)
+        for read_voltage in read_voltage_points
+    ]
+    seed = random.randrange(0, 2**32)
+    rng = random.Random(seed)
+    rng.shuffle(read_sequence)
+
+    set_voltage = float(params["write_voltage"])
+    reset_voltage = float(params["erase_voltage"])
+    if reset_voltage >= 0:
+        raise ValueError("Sigmoid reset voltage must be negative.")
+
+    voltages: List[float] = []
+    append_slots(voltages, 0.0, initial_gap)
+
+    for loop_index, read_voltage in enumerate(read_sequence):
+        for _ in range(int(params["write_pulses"])):
+            append_slots(voltages, set_voltage, write_width)
+            append_slots(voltages, 0.0, write_gap)
+
+        for _ in range(int(params["read_pulses"])):
+            append_slots(voltages, read_voltage, read_width)
+            append_slots(voltages, 0.0, read_gap)
+
+        for _ in range(int(params["erase_pulses"])):
+            append_slots(voltages, reset_voltage, erase_width)
+            append_slots(voltages, 0.0, erase_gap)
+
+        for _ in range(int(params["read_pulses"])):
+            append_slots(voltages, read_voltage, read_width)
+            append_slots(voltages, 0.0, read_gap)
+
+        if loop_index < len(read_sequence) - 1:
+            append_slots(voltages, 0.0, cycle_gap)
+
+    notes = [
+        f"Sigmoid waveform is quantized to {base:.6g} s slots.",
+        "Loop shape is set -> 0 -> read -> 0 -> reset -> 0 -> read.",
+        "Sigmoid start/stop/step are applied to the READ voltage, not the SET voltage.",
+        f"SET voltage is fixed at {set_voltage:.6g} V and RESET voltage is fixed at {reset_voltage:.6g} V.",
+        f"Randomized read-voltage order uses seed {seed} across {len(read_voltage_points)} voltage points repeated {loop_repeats} times each.",
+    ]
+    manifest = {
+        "mode": "randomized_read_voltage_sigmoid",
+        "random_seed": seed,
+        "set_voltage": set_voltage,
+        "reset_voltage": reset_voltage,
+        "read_voltage_points": list(read_voltage_points),
+        "read_voltage_sequence": list(read_sequence),
+        "repeats_per_voltage": loop_repeats,
+        "loops": len(read_sequence),
+        "base_width_s": base,
+        "write_pulses": int(params["write_pulses"]),
+        "read_pulses_per_block": int(params["read_pulses"]),
+        "erase_pulses": int(params["erase_pulses"]),
+    }
+    return build_times_for_slots(len(voltages), base), voltages, notes, manifest
+
+
 def build_summary(
     test_name: str,
     mode: str,
@@ -1420,6 +1506,25 @@ def estimate_pulse_point_count(
     if generator == "bias_stress":
         per_cycle = write_width + write_gap + read_pulses * (read_width + read_gap)
         return initial_gap + pulse_cycles * per_cycle + max(0, pulse_cycles - 1) * cycle_gap
+
+    if generator == "sigmoid_randomized":
+        read_point_count = len(
+            voltage_series(
+                float(params["sigmoid_start_voltage"]),
+                float(params["sigmoid_stop_voltage"]),
+                float(params["sigmoid_step_voltage"]),
+            )
+        )
+        if read_point_count <= 0:
+            return 0
+        per_loop = (
+            write_pulses * (write_width + max(1, write_gap))
+            + read_pulses * (read_width + max(1, read_gap))
+            + erase_pulses * (erase_width + max(1, erase_gap))
+            + read_pulses * (read_width + max(1, read_gap))
+        )
+        total_loops = pulse_cycles * read_point_count
+        return initial_gap + total_loops * per_loop + max(0, total_loops - 1) * cycle_gap
 
     if generator == "ltp_ltd":
         return (
@@ -1705,12 +1810,12 @@ class TestmakerApp:
         self._entry(frame, 0, 4, "Step V", "SIG_STEP_V", "0.05")
         ttk.Button(
             frame,
-            text="Export Sigmoid Collection",
+            text="Export Sigmoid Campaign",
             command=lambda: self._handle_action(self._export_sigmoid_collection),
         ).grid(row=0, column=6, sticky="e")
         ttk.Label(
             frame,
-            text="For each voltage in the range, Testmaker will save one pulse CSV and one protocol JSON.",
+            text="For Probability-Voltage Sigmoid, Start/Stop/Step are applied to the READ pulse and exported as one randomized set-read-reset-read CSV.",
         ).grid(row=1, column=0, columnspan=7, sticky="w", pady=(6, 0))
         return frame
 
@@ -1906,6 +2011,8 @@ class TestmakerApp:
         })
 
     def _get_pulse_params(self) -> Dict[str, object]:
+        selected_test_name = str(self._get_selected_test()["name"])
+        allow_blank_read_voltage = selected_test_name == "Probability-Voltage Sigmoid"
         return {
             "base_width": parse_float(self._string_var("PU_BASE", "").get(), "Base width"),
             "write_pulses": parse_int(self._string_var("PU_WRITE_N", "").get(), "Write pulses"),
@@ -1913,7 +2020,12 @@ class TestmakerApp:
             "write_width": parse_float(self._string_var("PU_WRITE_W", "").get(), "Write width"),
             "write_gap": parse_float(self._string_var("PU_WRITE_G", "").get(), "Write gap"),
             "read_pulses": parse_int(self._string_var("PU_READ_N", "").get(), "Read pulses"),
-            "read_voltage": parse_float(self._string_var("PU_READ_V", "").get(), "Read voltage"),
+            "read_voltage": parse_float(
+                self._string_var("PU_READ_V", "").get(),
+                "Read voltage",
+                allow_blank=allow_blank_read_voltage,
+                default=0.0,
+            ),
             "read_width": parse_float(self._string_var("PU_READ_W", "").get(), "Read width"),
             "read_gap": parse_float(self._string_var("PU_READ_G", "").get(), "Read gap"),
             "erase_pulses": parse_int(self._string_var("PU_ERASE_N", "").get(), "Erase pulses"),
@@ -1971,6 +2083,41 @@ class TestmakerApp:
             notes = ["Current protocol compatibility is direct: exported step uses this CSV as sweep_path."]
             return {"test": test, "mode": mode, "protocol_type": protocol_type, "times": times, "voltages": voltages, "notes": notes, "params": params}
 
+        if generator == "sigmoid_randomized":
+            sigmoid_params = self._get_sigmoid_range_params()
+            combined_params = validate_pulse_params(
+                {**self._get_pulse_params(), **sigmoid_params},
+                str(generator),
+            )
+            params = {key: value for key, value in combined_params.items() if not str(key).startswith("sigmoid_")}
+            if float(params["write_voltage"]) <= 0:
+                raise ValueError("Sigmoid set voltage must be positive.")
+            if float(params["erase_voltage"]) >= 0:
+                raise ValueError("Sigmoid reset voltage must be negative.")
+            if float(params["write_width"]) <= 0:
+                raise ValueError("Sigmoid set width must be greater than zero.")
+            if float(params["read_width"]) <= 0:
+                raise ValueError("Sigmoid read width must be greater than zero.")
+            if float(params["erase_width"]) <= 0:
+                raise ValueError("Sigmoid reset width must be greater than zero.")
+            if int(params["write_pulses"]) < 1:
+                raise ValueError("Sigmoid set pulses must be at least 1.")
+            if int(params["read_pulses"]) < 1:
+                raise ValueError("Sigmoid read pulses must be at least 1.")
+            if int(params["erase_pulses"]) < 1:
+                raise ValueError("Sigmoid reset pulses must be at least 1.")
+            times, voltages, notes, manifest = generate_sigmoid_randomized_slots(params, sigmoid_params)
+            notes.append("Exported pulse protocol uses pulse_width = base_width and preserves the randomized sigmoid loop order.")
+            return {
+                "test": test,
+                "mode": mode,
+                "protocol_type": protocol_type,
+                "times": times,
+                "voltages": voltages,
+                "notes": notes,
+                "params": combined_params,
+                "sigmoid_manifest": manifest,
+            }
         params = validate_pulse_params(self._get_pulse_params(), str(generator))
         if generator == "endurance":
             times, voltages, notes = generate_endurance_slots(params)
@@ -2033,19 +2180,48 @@ class TestmakerApp:
         )
         return filepath or ""
 
-    def _build_protocol_steps_for_path(self, csv_path: str, generated: Dict[str, object]) -> List[Dict[str, object]]:
+    def _build_protocol_steps_for_path(
+        self,
+        csv_path: str,
+        generated: Dict[str, object],
+        include_prefix_steps: bool = True,
+        extra_params: Dict[str, object] | None = None,
+    ) -> List[Dict[str, object]]:
         protocol_steps: List[Dict[str, object]] = []
-        if self._bool_var("-PROTO_ALIGN-", False).get():
+        if include_prefix_steps and self._bool_var("-PROTO_ALIGN-", False).get():
             protocol_steps.append({"type": "ALIGN", "params": {"move": True, "zaber_corr": True, "recheck": True}})
-        if self._bool_var("-PROTO_APPROACH-", False).get():
+        if include_prefix_steps and self._bool_var("-PROTO_APPROACH-", False).get():
             protocol_steps.append({"type": "APPROACH", "params": {"step_size": 0.5, "test_voltage": 0.1, "lower_threshold": 1e-11, "upper_threshold": 5e-11, "max_attempts": 50, "delay": 1}})
 
         if generated["protocol_type"] == "DCIV":
             params = dict(generated["params"])
-            protocol_steps.append({"type": "DCIV", "params": {"sweep_path": csv_path, "pos_compl": float(params["pos_compl"]), "neg_compl": float(params["neg_compl"]), "sweep_delay": float(params["timer_delay"]), "align": False, "approach": False, "smu_select": params["smu_select"], "use_4way_split": bool(params["use_4way_split"])}})
+            step_params = {
+                "sweep_path": csv_path,
+                "pos_compl": float(params["pos_compl"]),
+                "neg_compl": float(params["neg_compl"]),
+                "sweep_delay": float(params["timer_delay"]),
+                "align": False,
+                "approach": False,
+                "smu_select": params["smu_select"],
+                "use_4way_split": bool(params["use_4way_split"]),
+            }
+            if extra_params:
+                step_params.update(extra_params)
+            protocol_steps.append({"type": "DCIV", "params": step_params})
         elif generated["protocol_type"] == "PULSE":
             params = dict(generated["params"])
-            protocol_steps.append({"type": "PULSE", "params": {"pulse_path": csv_path, "compliance": float(params["pulse_compliance"]), "pulse_width": float(params["base_width"]), "align": False, "approach": False, "smu_select": params["smu_select"], "set_acquire_delay": float(params["set_acquire_delay"])}})
+            step_params = {
+                "pulse_path": csv_path,
+                "compliance": float(params["pulse_compliance"]),
+                "pulse_width": float(params["base_width"]),
+                "align": False,
+                "approach": False,
+                "smu_select": params["smu_select"],
+                "set_acquire_delay": float(params["set_acquire_delay"]),
+            }
+            if extra_params:
+                step_params.update(extra_params)
+            protocol_steps.append({"type": "PULSE", "params": step_params})
         else:
             raise ValueError("This generated test is not protocol-exportable.")
         return protocol_steps
@@ -2053,79 +2229,59 @@ class TestmakerApp:
     def _export_sigmoid_collection(self) -> None:
         test = self._get_selected_test()
         if str(test["name"]) != "Probability-Voltage Sigmoid":
-            raise ValueError("Sigmoid collection export is only for the Probability-Voltage Sigmoid test.")
-
-        pulse_params = validate_pulse_params(self._get_pulse_params(), "bias_stress")
-        sigmoid_params = self._get_sigmoid_range_params()
-        voltages = voltage_series(
-            sigmoid_params["sigmoid_start_voltage"],
-            sigmoid_params["sigmoid_stop_voltage"],
-            sigmoid_params["sigmoid_step_voltage"],
-        )
+            raise ValueError("Sigmoid campaign export is only for the Probability-Voltage Sigmoid test.")
+        if self.generated is None or str(self.generated.get("test", {}).get("name", "")) != "Probability-Voltage Sigmoid":
+            self.generated = self._generate_for_selected_test()
+            self._update_summary(self.generated)
 
         target_dir = filedialog.askdirectory(
             parent=self.root,
-            title="Select output folder for sigmoid collection",
+            title="Select output folder for sigmoid campaign",
             mustexist=False,
         )
         if not target_dir:
             return
         os.makedirs(target_dir, exist_ok=True)
 
-        manifest: Dict[str, object] = {
-            "test": test["name"],
-            "mode": "voltage_sigmoid_collection",
-            "voltages": [],
-            "count": len(voltages),
-            "base_width_s": pulse_params["base_width"],
-            "pulse_cycles": pulse_params["pulse_cycles"],
-            "files": [],
-        }
+        stem = slugify(str(test["name"]))
+        csv_path = os.path.join(target_dir, f"{stem}_randomized.csv")
+        json_path = os.path.join(target_dir, f"{stem}_protocol.json")
+        manifest_path = os.path.join(target_dir, f"{stem}_manifest.json")
 
-        for bias_voltage in voltages:
-            run_params = dict(pulse_params)
-            run_params["write_voltage"] = bias_voltage
-            times, vlist, notes = generate_bias_stress_slots(run_params)
-            notes.append("Generated as part of a voltage-sigmoid collection.")
-            generated = {
-                "test": test,
-                "mode": MODE_PULSE,
-                "protocol_type": "PULSE",
-                "times": times,
-                "voltages": vlist,
-                "notes": notes,
-                "params": run_params,
+        save_csv(list(self.generated["times"]), list(self.generated["voltages"]), csv_path)
+        protocol_steps = self._build_protocol_steps_for_path(csv_path, self.generated)
+        with open(json_path, "w", encoding="utf-8") as handle:
+            json.dump(protocol_steps, handle, indent=2)
+
+        manifest = dict(self.generated.get("sigmoid_manifest", {}))
+        manifest.update(
+            {
+                "test": test["name"],
+                "csv": csv_path,
+                "protocol": json_path,
             }
-
-            stem = f"{slugify(str(test['name']))}_v_{bias_voltage:+0.4f}".replace(".", "p").replace("+", "pos").replace("-", "neg")
-            csv_path = os.path.join(target_dir, f"{stem}.csv")
-            json_path = os.path.join(target_dir, f"{stem}_protocol.json")
-
-            save_csv(times, vlist, csv_path)
-            protocol_steps = self._build_protocol_steps_for_path(csv_path, generated)
-            with open(json_path, "w", encoding="utf-8") as handle:
-                json.dump(protocol_steps, handle, indent=2)
-
-            manifest["voltages"].append(bias_voltage)
-            manifest["files"].append({"voltage": bias_voltage, "csv": csv_path, "protocol": json_path})
-
-        manifest_path = os.path.join(target_dir, "sigmoid_collection_manifest.json")
+        )
         with open(manifest_path, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle, indent=2)
+
+        self.last_saved_csv_path = csv_path
+        self._string_var("-LAST_CSV-", "").set(csv_path)
 
         self._set_text_widget(
             "-SUMMARY-",
             "\n".join(
                 [
-                    "Probability-Voltage Sigmoid collection exported.",
+                    "Probability-Voltage Sigmoid campaign exported.",
                     f"Folder: {target_dir}",
-                    f"Voltage points: {len(voltages)}",
-                    f"Range: {voltages[0]:.4f} V to {voltages[-1]:.4f} V",
+                    f"Loops: {len(self.generated.get('sigmoid_manifest', {}).get('read_voltage_sequence', []))}",
+                    f"Read range: {float(self.generated['params']['sigmoid_start_voltage']):.4f} V to {float(self.generated['params']['sigmoid_stop_voltage']):.4f} V",
+                    f"CSV: {csv_path}",
+                    f"Protocol: {json_path}",
                     f"Manifest: {manifest_path}",
                 ]
             ),
         )
-        messagebox.showinfo("Testmaker", f"Saved sigmoid collection to:\n{target_dir}", parent=self.root)
+        messagebox.showinfo("Testmaker", f"Saved sigmoid campaign to:\n{target_dir}", parent=self.root)
 
     def _build_protocol_steps(self) -> List[Dict[str, object]]:
         if not self.generated:

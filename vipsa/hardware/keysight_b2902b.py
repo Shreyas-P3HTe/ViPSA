@@ -1047,6 +1047,7 @@ class KeysightB2902B:
 
         smu, temporary = self._get_session(adr=adr, timeout=120000)
         suffix = self._channel_suffix
+        fallback_to_list_mode = False
         try:
             pulse_width = float(pulse_width_s)
             acq_delay = pulse_width / 2 if acquire_delay_s is None else float(acquire_delay_s)
@@ -1105,28 +1106,54 @@ class KeysightB2902B:
             current_values = self._fetch_ascii_array("CURR", smu=smu)
             time_values = self._fetch_ascii_array("TIME", smu=smu)
 
-            records: list[dict[str, float | None]] = []
-            for index, voltage in enumerate(voltage_values):
-                v_cmd = source_values[index] if index < len(source_values) else voltage
-                v_meas = voltage_readings[index] if index < len(voltage_readings) else None
-                i_meas = current_values[index] if index < len(current_values) else None
-                timestamp = time_values[index] if index < len(time_values) else float(index) * pulse_width
-                records.append(
-                    _record(
-                        timestamp=timestamp,
-                        v_cmd=v_cmd,
-                        v_meas=v_meas,
-                        i_meas=i_meas,
-                        cycle_number=float(index),
+            # Some B2900 firmware / mode combinations acknowledge the pulse-list
+            # setup but only return the first acquired point. When that happens,
+            # fall back to the plain timed voltage-list sweep path, which is slower
+            # but reliably executes every slot in the CSV-backed pulse waveform.
+            if (
+                len(current_values) < len(voltage_values)
+                or len(voltage_readings) < len(voltage_values)
+            ):
+                fallback_to_list_mode = True
+            else:
+                records: list[dict[str, float | None]] = []
+                for index, voltage in enumerate(voltage_values):
+                    v_cmd = source_values[index] if index < len(source_values) else voltage
+                    v_meas = voltage_readings[index] if index < len(voltage_readings) else None
+                    i_meas = current_values[index] if index < len(current_values) else None
+                    timestamp = time_values[index] if index < len(time_values) else float(index) * pulse_width
+                    records.append(
+                        _record(
+                            timestamp=timestamp,
+                            v_cmd=v_cmd,
+                            v_meas=v_meas,
+                            i_meas=i_meas,
+                            cycle_number=float(index),
+                        )
                     )
-                )
-            return records
+                return records
         finally:
             try:
                 smu.write(f":OUTP{suffix} OFF")
             except Exception:
                 pass
             self._close_temp(smu, temporary)
+
+        if fallback_to_list_mode:
+            print(
+                "Warning: Keysight native pulse mode returned incomplete readback; "
+                "falling back to timed voltage-list execution."
+            )
+            return self.source_voltage_measure_current(
+                voltages=voltage_values,
+                current_compliance=current_compliance,
+                delay_s=float(pulse_width_s),
+                current_range=current_range,
+                reset=reset,
+                use_auto_current_range=current_autorange,
+                adr=adr,
+            )
+        return []
 
     ######---LEGACY / COMPATIBILITY HELPERS (SAFE TO IGNORE FOR CLEAN DRIVER PORTS)---######
 

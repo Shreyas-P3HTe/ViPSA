@@ -207,6 +207,41 @@ class SourceMeasureUnit:
 
 		return float(delay), float(acq_delay)
 
+	def _build_voltage_segments(
+		self,
+		voltage_list: Sequence[float],
+		times: list[float] | None,
+		default_width: float,
+	) -> list[tuple[float, float]]:
+		"""Collapse consecutive identical voltages into timed hold segments."""
+		voltages = [float(value) for value in voltage_list]
+		if not voltages:
+			return []
+
+		if times is not None and len(times) == len(voltages):
+			durations = [
+				max(0.0, float(times[index + 1]) - float(times[index]))
+				for index in range(len(times) - 1)
+			]
+			durations.append(max(0.0, float(default_width)))
+		else:
+			durations = [max(0.0, float(default_width))] * len(voltages)
+
+		segments: list[tuple[float, float]] = []
+		current_voltage = voltages[0]
+		current_duration = durations[0]
+
+		for voltage, duration in zip(voltages[1:], durations[1:]):
+			if abs(float(voltage) - float(current_voltage)) <= 1e-12:
+				current_duration += duration
+			else:
+				segments.append((float(current_voltage), float(current_duration)))
+				current_voltage = float(voltage)
+				current_duration = float(duration)
+
+		segments.append((float(current_voltage), float(current_duration)))
+		return segments
+
 	def _driver_records_to_compatibility(
 		self,
 		records: list[dict[str, float | None]],
@@ -268,8 +303,8 @@ class SourceMeasureUnit:
 		set_range: float | None = None,
 		current_autorange: bool = False,
 		adr: str | None = None,
-	) -> list[dict[str, float | None]]:
-		"""Run the shared driver voltage-list primitive and normalize its output."""
+		) -> list[dict[str, float | None]]:
+		"""Run the shared driver pulse/list primitive and normalize its output."""
 		driver_records = self.driver.run_voltage_pulse_train(
 			voltages=[float(value) for value in voltage_list],
 			current_compliance=float(current_compliance),
@@ -280,7 +315,280 @@ class SourceMeasureUnit:
 			adr=adr,
 			current_autorange=bool(current_autorange),
 		)
-		return self._driver_records_to_compatibility(driver_records)
+		compatibility_records = self._driver_records_to_compatibility(driver_records)
+
+		def _has_finite_current(record: dict[str, float | None]) -> bool:
+			value = record.get("Current (A)")
+			if value is None:
+				return False
+			try:
+				return bool(np.isfinite(float(value)))
+			except (TypeError, ValueError):
+				return False
+
+		expected_points = len([float(value) for value in voltage_list])
+		measured_points = sum(1 for record in compatibility_records if _has_finite_current(record))
+		if measured_points < expected_points:
+			print(
+				"Warning: pulse/list execution returned incomplete measurements; "
+				"falling back to point-by-point voltage sourcing."
+			)
+			return self._run_voltage_sweep_primitive_manual(
+				voltage_list=voltage_list,
+				set_width=set_width,
+				current_compliance=current_compliance,
+				set_range=set_range,
+				current_autorange=current_autorange,
+				adr=adr,
+			)
+
+		return compatibility_records
+
+	def _run_voltage_sweep_primitive_manual(
+		self,
+		voltage_list: Sequence[float],
+		set_width: float,
+		current_compliance: float,
+		set_range: float | None = None,
+		current_autorange: bool = False,
+		adr: str | None = None,
+	) -> list[dict[str, float | None]]:
+		"""Run one voltage list point-by-point for drivers whose list mode is unreliable."""
+		if getattr(self, "instrument_family", "") == "keysight_b2902b":
+			return self._run_voltage_sweep_primitive_manual_keysight(
+				voltage_list=voltage_list,
+				set_width=set_width,
+				current_compliance=current_compliance,
+				set_range=set_range,
+				current_autorange=current_autorange,
+				adr=adr,
+			)
+
+		records: list[dict[str, float | None]] = []
+		start_time = time.perf_counter()
+		current_range = None if current_autorange else set_range
+		if current_range is None and not current_autorange:
+			current_range = abs(float(current_compliance))
+
+		for index, voltage in enumerate(float(value) for value in voltage_list):
+			point_records = self.driver.hold_voltage_measure_current(
+				voltage=voltage,
+				current_compliance=float(current_compliance),
+				settle_s=max(0.0, float(set_width)),
+				current_range=current_range,
+				read_count=1,
+				reset=(index == 0),
+				adr=adr,
+			)
+			compatibility_records = self._driver_records_to_compatibility(point_records)
+			if compatibility_records:
+				point = compatibility_records[0]
+			else:
+				point = _measurement_record(
+					timestamp=time.perf_counter() - start_time,
+					v_cmd=voltage,
+					i_meas=None,
+					cycle_number=float(index),
+				)
+			point["Time(T)"] = time.perf_counter() - start_time
+			point["Cycle Number"] = float(index)
+			records.append(point)
+
+		return records
+
+	def _run_voltage_sweep_primitive_manual_keysight(
+		self,
+		voltage_list: Sequence[float],
+		set_width: float,
+		current_compliance: float,
+		set_range: float | None = None,
+		current_autorange: bool = False,
+		adr: str | None = None,
+	) -> list[dict[str, float | None]]:
+		"""Run a faster point-by-point voltage list on Keysight without reconfiguring every point."""
+		records: list[dict[str, float | None]] = []
+		driver = self.driver
+		start_time = time.perf_counter()
+		current_range = None if current_autorange else set_range
+		if current_range is None and not current_autorange:
+			current_range = abs(float(current_compliance))
+
+		smu, temporary = driver._get_session(adr=adr, timeout=120000)
+		suffix = driver._channel_suffix
+		try:
+			smu.write("*RST")
+			smu.write("*CLS")
+			driver._ensure_front_terminal(smu)
+			driver._configure_simple_read("VOLT", ("CURR", "VOLT"), smu)
+			smu.write(f":SENS{suffix}:CURR:PROT {float(current_compliance):.12g}")
+			smu.write(f":SOUR{suffix}:VOLT:RANG:AUTO ON")
+			if current_autorange:
+				smu.write(f":SENS{suffix}:CURR:RANG:AUTO ON")
+			else:
+				smu.write(f":SENS{suffix}:CURR:RANG:AUTO OFF")
+				smu.write(f":SENS{suffix}:CURR:RANG {float(current_range):.12g}")
+			pulse_nplc = driver._estimate_pulse_nplc(set_width)
+			smu.write(f":SENS{suffix}:CURR:NPLC {pulse_nplc:.12g}")
+			smu.write(f":SENS{suffix}:VOLT:NPLC {pulse_nplc:.12g}")
+			smu.write(":FORM:ELEM:SENS VOLT,CURR")
+			smu.write(f":OUTP{suffix} ON")
+
+			for index, voltage in enumerate(float(value) for value in voltage_list):
+				smu.write(f":SOUR{suffix}:VOLT {float(voltage):.12g}")
+				if set_width > 0:
+					time.sleep(max(0.0, float(set_width)))
+				v_meas, i_meas = driver._measure_spot_voltage_current(smu=smu)
+				records.append(
+					_measurement_record(
+						timestamp=time.perf_counter() - start_time,
+						v_cmd=voltage,
+						v_meas=v_meas,
+						i_meas=i_meas,
+						cycle_number=float(index),
+					)
+				)
+		finally:
+			try:
+				smu.write(f":OUTP{suffix} OFF")
+			except Exception:
+				pass
+			driver._close_temp(smu, temporary)
+
+		return records
+
+	def _run_voltage_segments_manual_keysight(
+		self,
+		voltage_list: Sequence[float],
+		times: list[float] | None,
+		set_width: float,
+		set_acquire_delay: float,
+		current_compliance: float,
+		set_range: float | None = None,
+		current_autorange: bool = False,
+		adr: str | None = None,
+	) -> list[dict[str, float | None]]:
+		"""Run Keysight pulse CSVs as compact timed segments instead of slot-by-slot points."""
+		segments = self._build_voltage_segments(
+			voltage_list=voltage_list,
+			times=times,
+			default_width=set_width,
+		)
+		if not segments:
+			return []
+
+		records: list[dict[str, float | None]] = []
+		driver = self.driver
+		start_time = time.perf_counter()
+		current_range = None if current_autorange else set_range
+		if current_range is None and not current_autorange:
+			current_range = abs(float(current_compliance))
+
+		min_segment_width = min(
+			max(1e-6, float(duration))
+			for _voltage, duration in segments
+		)
+
+		smu, temporary = driver._get_session(adr=adr, timeout=120000)
+		suffix = driver._channel_suffix
+		try:
+			smu.write("*RST")
+			smu.write("*CLS")
+			driver._ensure_front_terminal(smu)
+			driver._configure_simple_read("VOLT", ("CURR", "VOLT"), smu)
+			smu.write(f":SENS{suffix}:CURR:PROT {float(current_compliance):.12g}")
+			smu.write(f":SOUR{suffix}:VOLT:RANG:AUTO ON")
+			if current_autorange:
+				smu.write(f":SENS{suffix}:CURR:RANG:AUTO ON")
+			else:
+				smu.write(f":SENS{suffix}:CURR:RANG:AUTO OFF")
+				smu.write(f":SENS{suffix}:CURR:RANG {float(current_range):.12g}")
+			pulse_nplc = driver._estimate_pulse_nplc(min_segment_width)
+			smu.write(f":SENS{suffix}:CURR:NPLC {pulse_nplc:.12g}")
+			smu.write(f":SENS{suffix}:VOLT:NPLC {pulse_nplc:.12g}")
+			smu.write(":FORM:ELEM:SENS VOLT,CURR")
+			smu.write(f":OUTP{suffix} ON")
+
+			for index, (voltage, duration) in enumerate(segments):
+				smu.write(f":SOUR{suffix}:VOLT {float(voltage):.12g}")
+				measure_after = min(max(0.0, float(set_acquire_delay)), max(0.0, float(duration)))
+				if measure_after > 0:
+					time.sleep(measure_after)
+				v_meas, i_meas = driver._measure_spot_voltage_current(smu=smu)
+				remaining = max(0.0, float(duration) - measure_after)
+				if remaining > 0:
+					time.sleep(remaining)
+				records.append(
+					_measurement_record(
+						timestamp=time.perf_counter() - start_time,
+						v_cmd=voltage,
+						v_meas=v_meas,
+						i_meas=i_meas,
+						cycle_number=float(index),
+					)
+				)
+		finally:
+			try:
+				smu.write(f":OUTP{suffix} OFF")
+			except Exception:
+				pass
+			driver._close_temp(smu, temporary)
+
+		return records
+
+	def _run_voltage_sweep_primitive(
+		self,
+		voltage_list: Sequence[float],
+		set_width: float,
+		set_acquire_delay: float,
+		current_compliance: float,
+		set_range: float | None = None,
+		current_autorange: bool = False,
+		adr: str | None = None,
+	) -> list[dict[str, float | None]]:
+		"""Run one voltage sweep list and normalize its output.
+
+		DCIV/read-probe sweeps should use the driver's voltage-sweep primitive,
+		not the pulse-train primitive. Keithley 2450 list sweeps are currently
+		more reliable in point-by-point mode, so that path is selected directly.
+		"""
+		_ = set_acquire_delay
+
+		if getattr(self, "instrument_family", "") == "keithley_2450":
+			return self._run_voltage_sweep_primitive_manual(
+				voltage_list=voltage_list,
+				set_width=set_width,
+				current_compliance=current_compliance,
+				set_range=set_range,
+				current_autorange=current_autorange,
+				adr=adr,
+			)
+
+		try:
+			driver_records = self.driver.source_voltage_measure_current(
+				voltages=[float(value) for value in voltage_list],
+				current_compliance=float(current_compliance),
+				delay_s=float(set_width),
+				current_range=set_range,
+				reset=True,
+				adr=adr,
+				use_auto_current_range=bool(current_autorange),
+			)
+			return self._driver_records_to_compatibility(driver_records)
+		except Exception as exc:
+			message = str(exc).upper()
+			if "VI_ERROR_TMO" not in message and "TIMEOUT" not in message:
+				raise
+			print(
+				"Warning: voltage-list sweep timed out; falling back to point-by-point sweep."
+			)
+			return self._run_voltage_sweep_primitive_manual(
+				voltage_list=voltage_list,
+				set_width=set_width,
+				current_compliance=current_compliance,
+				set_range=set_range,
+				current_autorange=current_autorange,
+				adr=adr,
+			)
 
 	def _insert_read_probe_records(
 		self,
@@ -395,7 +703,7 @@ class SourceMeasureUnit:
 		sites. The active wrapped driver is always used.
 		"""
 		_ = dev
-		return self._run_voltage_list_primitive(
+		return self._run_voltage_sweep_primitive(
 			voltage_list=voltage_list,
 			set_width=set_width,
 			set_acquire_delay=set_acquire_delay,
@@ -423,6 +731,7 @@ class SourceMeasureUnit:
 		pos_channel: Any | None = None,
 		neg_channel: Any | None = None,
 		include_read_probe: bool = True,
+		progress_callback: Any | None = None,
 		read_probe_mode: str = "between_segments",
 		current_autorange: bool = False,
 	) -> tuple[list[dict[str, float | None]], list[dict[str, float | None]]]:
@@ -452,7 +761,10 @@ class SourceMeasureUnit:
 				current_autorange=current_autorange,
 				adr=adr,
 			)
-			data_array.extend(self._apply_cycle_number(segment_records, cycle_number))
+			cycle_records = self._apply_cycle_number(segment_records, cycle_number)
+			data_array.extend(cycle_records)
+			if callable(progress_callback):
+				progress_callback(self.records_to_legacy_array(cycle_records))
 			resistance_array.extend(
 				self._insert_read_probe_records(
 					cycle_number=cycle_number,
@@ -519,7 +831,7 @@ class SourceMeasureUnit:
 			"nb": (10e-6, 10e-8),
 		}
 
-		for segment_index, (cycle_number, tag, segment) in enumerate(splits):
+		for cycle_number, tag, segment in splits:
 			if wait_time is not None and wait_time > 0:
 				time.sleep(wait_time)
 
@@ -533,10 +845,11 @@ class SourceMeasureUnit:
 				current_autorange=current_autorange,
 				adr=adr,
 			)
-			data_array.extend(self._apply_cycle_number(segment_records, cycle_number))
+			cycle_records = self._apply_cycle_number(segment_records, cycle_number)
+			data_array.extend(cycle_records)
 
 			if callable(progress_callback):
-				progress_callback(segment_index + 1, len(splits))
+				progress_callback(self.records_to_legacy_array(cycle_records))
 
 			resistance_array.extend(
 				self._insert_read_probe_records(
@@ -577,6 +890,18 @@ class SourceMeasureUnit:
 
 		if set_acquire_delay is None:
 			_, set_acquire_delay = self._resolve_delay_and_acq(times, set_width, None)
+
+		if getattr(self, "instrument_family", "") == "keysight_b2902b":
+			return self._run_voltage_segments_manual_keysight(
+				voltage_list=voltage_list,
+				times=times,
+				set_width=set_width,
+				set_acquire_delay=float(set_acquire_delay),
+				current_compliance=float(current_compliance),
+				set_range=None,
+				current_autorange=bool(current_autorange),
+				adr=adr,
+			)
 
 		return self._run_voltage_list_primitive(
 			voltage_list=voltage_list,
