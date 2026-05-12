@@ -160,6 +160,9 @@ class _HeadlessTestmakerHarness:
         "use_4way_split": "SW_4WAY",
         "base_width": "PU_BASE",
         "write_voltage": "PU_WRITE_V",
+        "sigmoid_start_voltage": "SIG_START_V",
+        "sigmoid_stop_voltage": "SIG_STOP_V",
+        "sigmoid_step_voltage": "SIG_STEP_V",
         "write_width": "PU_WRITE_W",
         "write_gap": "PU_WRITE_G",
         "write_pulses": "PU_WRITE_N",
@@ -234,20 +237,34 @@ class _HeadlessTestmakerHarness:
     def _get_pulse_params(self):
         return self._module.TestmakerApp._get_pulse_params(self)
 
+    def _get_sigmoid_range_params(self):
+        return self._module.TestmakerApp._get_sigmoid_range_params(self)
+
+    def _set_text_widget(self, _key, _value):
+        return None
+
     def generate(self):
         return self._module.TestmakerApp._generate_for_selected_test(self)
 
-    def build_protocol_steps_for_path(self, csv_path, generated):
-        return self._module.TestmakerApp._build_protocol_steps_for_path(self, csv_path, generated)
+    def build_protocol_steps_for_path(self, csv_path, generated, extra_params=None):
+        return self._module.TestmakerApp._build_protocol_steps_for_path(
+            self,
+            csv_path,
+            generated,
+            extra_params=extra_params,
+        )
 
-    def _build_protocol_steps_for_path(self, csv_path, generated):
-        return self.build_protocol_steps_for_path(csv_path, generated)
+    def _build_protocol_steps_for_path(self, csv_path, generated, extra_params=None):
+        return self.build_protocol_steps_for_path(csv_path, generated, extra_params=extra_params)
 
     def _build_protocol_steps(self):
         return self._module.TestmakerApp._build_protocol_steps(self)
 
     def export_protocol_json(self):
         return self._module.TestmakerApp._export_protocol_json(self)
+
+    def export_sigmoid_collection(self):
+        return self._module.TestmakerApp._export_sigmoid_collection(self)
 
 
 class SmuBackCompatSmokeTests(unittest.TestCase):
@@ -570,6 +587,41 @@ class SmuBackCompatSmokeTests(unittest.TestCase):
             set(steps[-1]["params"]),
             {"pulse_path", "compliance", "pulse_width", "align", "approach", "smu_select", "set_acquire_delay"},
         )
+
+    def test_testmaker_sigmoid_collection_export_includes_manifest_metadata(self):
+        testmaker = _import_testmaker_module()
+        app = _HeadlessTestmakerHarness(testmaker, "Probability-Voltage Sigmoid")
+
+        generated = app.generate()
+        manifest = generated["sigmoid_manifest"]
+        self.assertEqual(manifest["mode"], "randomized_set_voltage_sigmoid")
+        self.assertEqual(manifest["read_voltage"], float(generated["params"]["read_voltage"]))
+        self.assertEqual(len(manifest["set_voltage_sequence"]), manifest["loops"])
+        self.assertEqual(
+            sorted(set(manifest["set_voltage_sequence"])),
+            sorted(manifest["set_voltage_points"]),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            app.generated = generated
+            with patch.object(testmaker.filedialog, "askdirectory", return_value=tmpdir):
+                with patch.object(testmaker.messagebox, "showinfo", return_value=None):
+                    app.export_sigmoid_collection()
+
+            stem = testmaker.slugify("Probability-Voltage Sigmoid")
+            json_path = os.path.join(tmpdir, f"{stem}_protocol.json")
+            manifest_path = os.path.join(tmpdir, f"{stem}_manifest.json")
+
+            with open(json_path, "r", encoding="utf-8") as handle:
+                steps = json.load(handle)
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                saved_manifest = json.load(handle)
+
+        self.assertEqual([step["type"] for step in steps], ["PULSE"])
+        self.assertEqual(steps[0]["params"]["pulse_mode"], "randomized_set_voltage_sigmoid")
+        self.assertEqual(steps[0]["params"]["sigmoid_manifest_path"], manifest_path)
+        self.assertEqual(saved_manifest["mode"], "randomized_set_voltage_sigmoid")
+        self.assertEqual(saved_manifest["csv"], os.path.join(tmpdir, f"{stem}_randomized.csv"))
 
 
 if __name__ == "__main__":

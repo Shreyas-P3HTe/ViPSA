@@ -4,9 +4,9 @@
 
 ### Probability-voltage sigmoid workflow updates
 - Reworked `Probability-Voltage Sigmoid` in `vipsa/gui/Testmaker_tk.py` from the earlier bias-stress style export into a dedicated randomized sigmoid generator.
-- Added the new `sigmoid_randomized` pulse generator that builds `set -> 0 -> read -> 0 -> reset -> 0 -> read` loops, applies the sigmoid range to the READ voltage, enforces a negative reset voltage, and records the randomized read-voltage order plus seed in a manifest.
+- Updated `sigmoid_randomized` so it builds `0 -> set -> read -> reset -> read` style loops with explicit zero gaps, applies the sigmoid range to the SET voltage, keeps READ and RESET fixed, and records the randomized set-voltage order plus seed in a manifest.
 - Updated the sigmoid defaults, validation, and point-count estimation so Testmaker can reject oversized randomized pulse campaigns before export.
-- Changed sigmoid export from one file per voltage point to one randomized CSV, one protocol JSON, and one manifest JSON for the whole campaign, and refreshed the related UI copy to match the new flow.
+- Changed sigmoid export from one file per voltage point to one randomized CSV, one protocol JSON, and one manifest JSON for the whole campaign, refreshed the related UI copy to match the new flow, and threaded the sigmoid manifest metadata into exported pulse steps for downstream analysis.
 
 ### Keysight pulse execution and orchestration hardening
 - Updated `vipsa/hardware/keysight_b2902b.py` so native Keysight pulse-list execution detects incomplete array readback and falls back to timed voltage-list execution instead of silently returning partial data.
@@ -19,6 +19,7 @@
 - Updated `vipsa/gui/Viewfinder4_tk.py` live plotting so it can consume both legacy array-style progress updates and dict-based normalized measurement records.
 - Fixed `vipsa/workflows/Main4.py` so `ALIGN` protocol steps do not try to resolve an SMU from the connected-SMU map, avoiding the `Requested SMU 'None' is not connected` failure on prefix alignment steps.
 - Adjusted `vipsa/analysis/Datahandling.py` to use an Agg-backed figure canvas explicitly and clear standalone figures directly instead of routing cleanup through `plt.close()`.
+- Added sigmoid-aware plotting in `vipsa/analysis/Datahandling.py` so saved pulse outputs from the randomized set-voltage sigmoid test can be reopened and rendered as switching-probability versus set-voltage curves using the saved manifest metadata.
 
 ### Repository housekeeping
 - Normalized the tracked `.codex` file mode from executable to a regular file.

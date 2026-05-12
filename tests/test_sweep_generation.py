@@ -117,6 +117,80 @@ class ArtifactSaveTests(unittest.TestCase):
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
+    def test_sigmoid_pulse_output_rebuilds_probability_plot(self):
+        handler = Data_Handler()
+        tmpdir = os.path.join(PACKAGE_ROOT, "tests_artifacts_tmp")
+        os.makedirs(tmpdir, exist_ok=True)
+        try:
+            manifest_path = os.path.join(tmpdir, "sigmoid_manifest.json")
+            with open(manifest_path, "w", encoding="utf-8") as handle:
+                json.dump(
+                    {
+                        "mode": "randomized_set_voltage_sigmoid",
+                        "read_voltage": 0.1,
+                        "reset_voltage": -0.5,
+                        "set_voltage_points": [0.2, 0.6],
+                        "set_voltage_sequence": [0.2, 0.6],
+                        "loops": 2,
+                        "write_pulses": 1,
+                        "read_pulses_per_block": 1,
+                        "erase_pulses": 1,
+                    },
+                    handle,
+                    indent=2,
+                )
+
+            records = [
+                {"Time(T)": 0.0, "Voltage (V)": 0.0, "Current (A)": 1e-9, "V_cmd (V)": 0.0},
+                {"Time(T)": 0.1, "Voltage (V)": 0.2, "Current (A)": 4e-7, "V_cmd (V)": 0.2},
+                {"Time(T)": 0.2, "Voltage (V)": 0.1, "Current (A)": 1e-7, "V_cmd (V)": 0.1},
+                {"Time(T)": 0.3, "Voltage (V)": -0.5, "Current (A)": 3e-7, "V_cmd (V)": -0.5},
+                {"Time(T)": 0.4, "Voltage (V)": 0.1, "Current (A)": 2e-7, "V_cmd (V)": 0.1},
+                {"Time(T)": 0.5, "Voltage (V)": 0.0, "Current (A)": 1e-9, "V_cmd (V)": 0.0},
+                {"Time(T)": 0.6, "Voltage (V)": 0.6, "Current (A)": 8e-7, "V_cmd (V)": 0.6},
+                {"Time(T)": 0.7, "Voltage (V)": 0.1, "Current (A)": 1e-5, "V_cmd (V)": 0.1},
+                {"Time(T)": 0.8, "Voltage (V)": -0.5, "Current (A)": 4e-7, "V_cmd (V)": -0.5},
+                {"Time(T)": 0.9, "Voltage (V)": 0.1, "Current (A)": 1e-7, "V_cmd (V)": 0.1},
+            ]
+
+            csv_path = handler.save_file(
+                records,
+                "Pulse",
+                "sample_sigmoid",
+                "device_7",
+                cont_current=1e-9,
+                Z_pos=4.2,
+                save_directory=tmpdir,
+                metadata={
+                    "measurement_parameters": {
+                        "pulse_mode": "randomized_set_voltage_sigmoid",
+                        "sigmoid_manifest_path": manifest_path,
+                    },
+                    "protocol_context": {
+                        "current_step_params": {
+                            "pulse_mode": "randomized_set_voltage_sigmoid",
+                            "sigmoid_manifest_path": manifest_path,
+                        }
+                    },
+                },
+            )
+
+            figure = handler.build_measurement_figure(
+                csv_path,
+                data_name="Pulse",
+                sample_id="sample_sigmoid",
+                device_id="device_7",
+                managed=False,
+            )
+            axis = figure.axes[0]
+            line = axis.get_lines()[0]
+
+            self.assertEqual(axis.get_ylabel(), "Switching probability")
+            self.assertEqual(list(line.get_xdata()), [0.2, 0.6])
+            self.assertEqual(list(line.get_ydata()), [0.0, 1.0])
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -134,7 +134,67 @@ class Data_Handler():
 
         return df[expected_columns]
 
-    def _infer_plot_kind(self, csvpath, metadata=None):
+    def _load_metadata_sidecar(self, csvpath):
+        metadata_path = f"{os.path.splitext(csvpath)[0]}.metadata.json"
+        if not os.path.exists(metadata_path):
+            return {}
+        try:
+            with open(metadata_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _metadata_section(self, metadata, key):
+        if not isinstance(metadata, dict):
+            return {}
+        section = metadata.get(key, {})
+        return section if isinstance(section, dict) else {}
+
+    def _get_sigmoid_manifest_path(self, metadata):
+        measurement_params = self._metadata_section(metadata, "measurement_parameters")
+        protocol_context = self._metadata_section(metadata, "protocol_context")
+        current_step_params = self._metadata_section(protocol_context, "current_step_params")
+
+        for container in (metadata, measurement_params, current_step_params):
+            path = container.get("sigmoid_manifest_path")
+            if path:
+                return str(path)
+        return None
+
+    def _load_sigmoid_manifest(self, metadata):
+        manifest_path = self._get_sigmoid_manifest_path(metadata)
+        if not manifest_path or not os.path.exists(manifest_path):
+            return {}
+        try:
+            with open(manifest_path, "r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except Exception:
+            return {}
+        return payload if isinstance(payload, dict) else {}
+
+    def _is_sigmoid_measurement(self, metadata):
+        metadata = metadata if isinstance(metadata, dict) else {}
+        measurement_params = self._metadata_section(metadata, "measurement_parameters")
+        protocol_context = self._metadata_section(metadata, "protocol_context")
+        current_step_params = self._metadata_section(protocol_context, "current_step_params")
+
+        for pulse_mode in (
+            metadata.get("pulse_mode"),
+            measurement_params.get("pulse_mode"),
+            current_step_params.get("pulse_mode"),
+        ):
+            if str(pulse_mode or "").strip().lower() == "randomized_set_voltage_sigmoid":
+                return True
+
+        manifest = self._load_sigmoid_manifest(metadata)
+        return str(manifest.get("mode", "")).strip().lower() == "randomized_set_voltage_sigmoid"
+
+    def _infer_plot_kind(self, csvpath, requested_data_name=None, metadata=None):
+        if self._is_sigmoid_measurement(metadata):
+            return "sigmoid"
+        if requested_data_name:
+            return str(requested_data_name).lower()
         if metadata and metadata.get("data_name"):
             return str(metadata["data_name"]).lower()
         folder_name = os.path.basename(os.path.dirname(csvpath)).lower()
@@ -262,9 +322,150 @@ class Data_Handler():
         figure.tight_layout()
         return figure
 
-    def build_measurement_figure(self, csvpath, data_name=None, sample_id="NA", device_id="NA", managed=True):
+    def _segment_voltage_levels(self, df):
+        if "Current (A)" not in df.columns:
+            return []
+
+        voltage_column = "V_cmd (V)" if "V_cmd (V)" in df.columns else "Voltage (V)"
+        voltages = pd.to_numeric(df.get(voltage_column, pd.Series(dtype=float)), errors='coerce').tolist()
+        currents = pd.to_numeric(df.get("Current (A)", pd.Series(dtype=float)), errors='coerce').abs().tolist()
+
+        segments = []
+        active_voltage = None
+        active_currents = []
+
+        for voltage, current in zip(voltages, currents):
+            if pd.isna(voltage):
+                continue
+
+            voltage = float(voltage)
+            if active_voltage is None:
+                active_voltage = voltage
+                active_currents = [current]
+                continue
+
+            if abs(voltage - active_voltage) > 1e-9:
+                current_series = pd.Series(active_currents, dtype=float).dropna()
+                segments.append(
+                    {
+                        "voltage": float(active_voltage),
+                        "current": float(current_series.mean()) if not current_series.empty else np.nan,
+                    }
+                )
+                active_voltage = voltage
+                active_currents = [current]
+            else:
+                active_currents.append(current)
+
+        if active_voltage is not None:
+            current_series = pd.Series(active_currents, dtype=float).dropna()
+            segments.append(
+                {
+                    "voltage": float(active_voltage),
+                    "current": float(current_series.mean()) if not current_series.empty else np.nan,
+                }
+            )
+        return segments
+
+    def _build_sigmoid_figure(self, df, metadata=None, sample_id="NA", device_id="NA", managed=True):
+        manifest = self._load_sigmoid_manifest(metadata or {})
+        read_voltage = manifest.get("read_voltage")
+        if read_voltage is not None and abs(float(read_voltage)) <= 1e-12:
+            return self._build_pulse_figure(df, sample_id=sample_id, device_id=device_id, managed=managed)
+
+        write_pulses = max(1, int(manifest.get("write_pulses", 1)))
+        read_pulses = max(1, int(manifest.get("read_pulses_per_block", 1)))
+        erase_pulses = max(1, int(manifest.get("erase_pulses", 1)))
+        segments_per_loop = write_pulses + read_pulses + erase_pulses + read_pulses
+
+        voltage_segments = [
+            segment
+            for segment in self._segment_voltage_levels(df.copy())
+            if abs(float(segment.get("voltage", 0.0))) > 1e-12
+        ]
+        available_loops = len(voltage_segments) // segments_per_loop if segments_per_loop > 0 else 0
+        expected_loops = int(manifest.get("loops", available_loops or 0))
+        loop_count = min(expected_loops if expected_loops > 0 else available_loops, available_loops)
+        if loop_count <= 0:
+            return self._build_pulse_figure(df, sample_id=sample_id, device_id=device_id, managed=managed)
+
+        loop_records = []
+        for loop_index in range(loop_count):
+            start = loop_index * segments_per_loop
+            stop = start + segments_per_loop
+            loop_segments = voltage_segments[start:stop]
+            if len(loop_segments) < segments_per_loop:
+                break
+
+            set_segments = loop_segments[:write_pulses]
+            read_after_set_segments = loop_segments[write_pulses:write_pulses + read_pulses]
+            read_after_reset_segments = loop_segments[-read_pulses:]
+
+            set_voltage = float(np.mean([segment["voltage"] for segment in set_segments]))
+            read_after_set_current = float(np.nanmean([segment["current"] for segment in read_after_set_segments]))
+            read_after_reset_current = float(np.nanmean([segment["current"] for segment in read_after_reset_segments]))
+
+            if not np.isfinite(read_after_set_current) or not np.isfinite(read_after_reset_current):
+                continue
+
+            loop_records.append(
+                {
+                    "set_voltage": set_voltage,
+                    "read_after_set_current": read_after_set_current,
+                    "read_after_reset_current": read_after_reset_current,
+                    "switched": float(read_after_set_current > read_after_reset_current),
+                }
+            )
+
+        if not loop_records:
+            return self._build_pulse_figure(df, sample_id=sample_id, device_id=device_id, managed=managed)
+
+        loop_df = pd.DataFrame.from_records(loop_records)
+        loop_df["set_voltage_bucket"] = loop_df["set_voltage"].round(12)
+        summary = (
+            loop_df.groupby("set_voltage_bucket", as_index=False)
+            .agg(
+                set_voltage=("set_voltage", "mean"),
+                switching_probability=("switched", "mean"),
+                loops=("switched", "size"),
+            )
+            .sort_values("set_voltage")
+        )
+
+        figure, axis = self._create_figure(figsize=(8, 4.5), dpi=150, managed=managed)
+        axis.plot(
+            summary["set_voltage"],
+            summary["switching_probability"],
+            marker="o",
+            linewidth=1.5,
+            color="#1f77b4",
+            label="P(read after set > read after reset)",
+        )
+        axis.set_xlabel("Set voltage (V)")
+        axis.set_ylabel("Switching probability")
+        axis.set_ylim(-0.02, 1.02)
+        axis.grid(True, alpha=0.4)
+
+        title = f"Voltage Sigmoid | Sample {sample_id} | Device {device_id}"
+        if read_voltage is not None:
+            title += f" | Read {float(read_voltage):.3g} V"
+        axis.set_title(title)
+        axis.legend()
+        figure.tight_layout()
+        return figure
+
+    def build_measurement_figure(self, csvpath, data_name=None, sample_id="NA", device_id="NA", managed=True, metadata=None):
         df = pd.read_csv(csvpath)
-        plot_kind = (data_name or self._infer_plot_kind(csvpath)).lower()
+        metadata_payload = dict(metadata or self._load_metadata_sidecar(csvpath))
+        plot_kind = self._infer_plot_kind(csvpath, requested_data_name=data_name, metadata=metadata_payload).lower()
+        if plot_kind == "sigmoid":
+            return self._build_sigmoid_figure(
+                df,
+                metadata=metadata_payload,
+                sample_id=sample_id,
+                device_id=device_id,
+                managed=managed,
+            )
         if plot_kind == "pulse":
             return self._build_pulse_figure(df, sample_id=sample_id, device_id=device_id, managed=managed)
         if plot_kind == "resistance":
@@ -301,6 +502,7 @@ class Data_Handler():
                     sample_id=metadata.get("sample_id", "NA"),
                     device_id=metadata.get("device_id", "NA"),
                     managed=False,
+                    metadata=metadata,
                 )
                 created_figure = True
 
@@ -623,6 +825,10 @@ class Data_Handler():
 
     def show_pulse(self, csvpath, sample_id="NA", device_id="NA"):
         self.build_measurement_figure(csvpath, data_name="Pulse", sample_id=sample_id, device_id=device_id)
+        plt.show()
+
+    def show_sigmoid(self, csvpath, sample_id="NA", device_id="NA"):
+        self.build_measurement_figure(csvpath, data_name="Sigmoid", sample_id=sample_id, device_id=device_id)
         plt.show()
             
     def fold_pos_cycle(self, cycle_df):

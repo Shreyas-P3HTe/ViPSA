@@ -522,8 +522,8 @@ TEST_CATALOG: List[Dict[str, object]] = [
         "mode": MODE_PULSE,
         "generator": "sigmoid_randomized",
         "protocol_type": "PULSE",
-        "description": "Randomized set-read-reset-read loops for collecting a probability-voltage sigmoid from a read-bias sweep.",
-        "feasibility": "Supported as one randomized pulse CSV where the sigmoid range is applied to the READ pulse and the reset pulse stays negative.",
+        "description": "Randomized set-read-reset-read loops for collecting a probability-voltage sigmoid from a set-voltage sweep.",
+        "feasibility": "Supported as one randomized pulse CSV where the sigmoid range is applied to the SET pulse while READ and RESET stay fixed.",
         "defaults": {
             "base_width": 0.001,
             "write_voltage": 0.5,
@@ -533,7 +533,7 @@ TEST_CATALOG: List[Dict[str, object]] = [
             "write_width": 0.01,
             "write_gap": 0.005,
             "write_pulses": 1,
-            "read_voltage": 0.0,
+            "read_voltage": 0.1,
             "read_width": 0.001,
             "read_gap": 0.001,
             "read_pulses": 1,
@@ -1254,25 +1254,25 @@ def generate_sigmoid_randomized_slots(
     cycle_gap = slots_from_seconds(float(params["cycle_gap"]), base)
     initial_gap = slots_from_seconds(float(params["initial_gap"]), base)
 
-    read_voltage_points = voltage_series(
+    set_voltage_points = voltage_series(
         float(sigmoid_params["sigmoid_start_voltage"]),
         float(sigmoid_params["sigmoid_stop_voltage"]),
         float(sigmoid_params["sigmoid_step_voltage"]),
     )
-    if not read_voltage_points:
-        raise ValueError("No sigmoid read voltages were generated from the selected range.")
+    if not set_voltage_points:
+        raise ValueError("No sigmoid set voltages were generated from the selected range.")
 
     loop_repeats = int(params["pulse_cycles"])
-    read_sequence = [
-        float(read_voltage)
+    set_sequence = [
+        float(set_voltage)
         for _ in range(loop_repeats)
-        for read_voltage in read_voltage_points
+        for set_voltage in set_voltage_points
     ]
     seed = random.randrange(0, 2**32)
     rng = random.Random(seed)
-    rng.shuffle(read_sequence)
+    rng.shuffle(set_sequence)
 
-    set_voltage = float(params["write_voltage"])
+    read_voltage = float(params["read_voltage"])
     reset_voltage = float(params["erase_voltage"])
     if reset_voltage >= 0:
         raise ValueError("Sigmoid reset voltage must be negative.")
@@ -1280,7 +1280,7 @@ def generate_sigmoid_randomized_slots(
     voltages: List[float] = []
     append_slots(voltages, 0.0, initial_gap)
 
-    for loop_index, read_voltage in enumerate(read_sequence):
+    for loop_index, set_voltage in enumerate(set_sequence):
         for _ in range(int(params["write_pulses"])):
             append_slots(voltages, set_voltage, write_width)
             append_slots(voltages, 0.0, write_gap)
@@ -1297,29 +1297,31 @@ def generate_sigmoid_randomized_slots(
             append_slots(voltages, read_voltage, read_width)
             append_slots(voltages, 0.0, read_gap)
 
-        if loop_index < len(read_sequence) - 1:
+        if loop_index < len(set_sequence) - 1:
             append_slots(voltages, 0.0, cycle_gap)
 
     notes = [
         f"Sigmoid waveform is quantized to {base:.6g} s slots.",
         "Loop shape is set -> 0 -> read -> 0 -> reset -> 0 -> read.",
-        "Sigmoid start/stop/step are applied to the READ voltage, not the SET voltage.",
-        f"SET voltage is fixed at {set_voltage:.6g} V and RESET voltage is fixed at {reset_voltage:.6g} V.",
-        f"Randomized read-voltage order uses seed {seed} across {len(read_voltage_points)} voltage points repeated {loop_repeats} times each.",
+        "Sigmoid start/stop/step are applied to the SET voltage, while READ and RESET stay fixed.",
+        f"READ voltage is fixed at {read_voltage:.6g} V and RESET voltage is fixed at {reset_voltage:.6g} V.",
+        f"Randomized set-voltage order uses seed {seed} across {len(set_voltage_points)} voltage points repeated {loop_repeats} times each.",
     ]
     manifest = {
-        "mode": "randomized_read_voltage_sigmoid",
+        "mode": "randomized_set_voltage_sigmoid",
         "random_seed": seed,
-        "set_voltage": set_voltage,
+        "read_voltage": read_voltage,
         "reset_voltage": reset_voltage,
-        "read_voltage_points": list(read_voltage_points),
-        "read_voltage_sequence": list(read_sequence),
+        "set_voltage_points": list(set_voltage_points),
+        "set_voltage_sequence": list(set_sequence),
         "repeats_per_voltage": loop_repeats,
-        "loops": len(read_sequence),
+        "loops": len(set_sequence),
         "base_width_s": base,
         "write_pulses": int(params["write_pulses"]),
         "read_pulses_per_block": int(params["read_pulses"]),
         "erase_pulses": int(params["erase_pulses"]),
+        "loop_shape": "set -> 0 -> read -> 0 -> reset -> 0 -> read",
+        "sigmoid_axis": "set_voltage",
     }
     return build_times_for_slots(len(voltages), base), voltages, notes, manifest
 
@@ -1508,14 +1510,14 @@ def estimate_pulse_point_count(
         return initial_gap + pulse_cycles * per_cycle + max(0, pulse_cycles - 1) * cycle_gap
 
     if generator == "sigmoid_randomized":
-        read_point_count = len(
+        sigmoid_point_count = len(
             voltage_series(
                 float(params["sigmoid_start_voltage"]),
                 float(params["sigmoid_stop_voltage"]),
                 float(params["sigmoid_step_voltage"]),
             )
         )
-        if read_point_count <= 0:
+        if sigmoid_point_count <= 0:
             return 0
         per_loop = (
             write_pulses * (write_width + max(1, write_gap))
@@ -1523,7 +1525,7 @@ def estimate_pulse_point_count(
             + erase_pulses * (erase_width + max(1, erase_gap))
             + read_pulses * (read_width + max(1, read_gap))
         )
-        total_loops = pulse_cycles * read_point_count
+        total_loops = pulse_cycles * sigmoid_point_count
         return initial_gap + total_loops * per_loop + max(0, total_loops - 1) * cycle_gap
 
     if generator == "ltp_ltd":
@@ -1815,7 +1817,7 @@ class TestmakerApp:
         ).grid(row=0, column=6, sticky="e")
         ttk.Label(
             frame,
-            text="For Probability-Voltage Sigmoid, Start/Stop/Step are applied to the READ pulse and exported as one randomized set-read-reset-read CSV.",
+            text="For Probability-Voltage Sigmoid, Start/Stop/Step define the randomized SET voltages. The fixed READ voltage still comes from the pulse settings and the Write voltage field is ignored for this test.",
         ).grid(row=1, column=0, columnspan=7, sticky="w", pady=(6, 0))
         return frame
 
@@ -2011,8 +2013,6 @@ class TestmakerApp:
         })
 
     def _get_pulse_params(self) -> Dict[str, object]:
-        selected_test_name = str(self._get_selected_test()["name"])
-        allow_blank_read_voltage = selected_test_name == "Probability-Voltage Sigmoid"
         return {
             "base_width": parse_float(self._string_var("PU_BASE", "").get(), "Base width"),
             "write_pulses": parse_int(self._string_var("PU_WRITE_N", "").get(), "Write pulses"),
@@ -2023,7 +2023,7 @@ class TestmakerApp:
             "read_voltage": parse_float(
                 self._string_var("PU_READ_V", "").get(),
                 "Read voltage",
-                allow_blank=allow_blank_read_voltage,
+                allow_blank=False,
                 default=0.0,
             ),
             "read_width": parse_float(self._string_var("PU_READ_W", "").get(), "Read width"),
@@ -2090,8 +2090,6 @@ class TestmakerApp:
                 str(generator),
             )
             params = {key: value for key, value in combined_params.items() if not str(key).startswith("sigmoid_")}
-            if float(params["write_voltage"]) <= 0:
-                raise ValueError("Sigmoid set voltage must be positive.")
             if float(params["erase_voltage"]) >= 0:
                 raise ValueError("Sigmoid reset voltage must be negative.")
             if float(params["write_width"]) <= 0:
@@ -2249,7 +2247,14 @@ class TestmakerApp:
         manifest_path = os.path.join(target_dir, f"{stem}_manifest.json")
 
         save_csv(list(self.generated["times"]), list(self.generated["voltages"]), csv_path)
-        protocol_steps = self._build_protocol_steps_for_path(csv_path, self.generated)
+        protocol_steps = self._build_protocol_steps_for_path(
+            csv_path,
+            self.generated,
+            extra_params={
+                "pulse_mode": "randomized_set_voltage_sigmoid",
+                "sigmoid_manifest_path": manifest_path,
+            },
+        )
         with open(json_path, "w", encoding="utf-8") as handle:
             json.dump(protocol_steps, handle, indent=2)
 
@@ -2273,8 +2278,8 @@ class TestmakerApp:
                 [
                     "Probability-Voltage Sigmoid campaign exported.",
                     f"Folder: {target_dir}",
-                    f"Loops: {len(self.generated.get('sigmoid_manifest', {}).get('read_voltage_sequence', []))}",
-                    f"Read range: {float(self.generated['params']['sigmoid_start_voltage']):.4f} V to {float(self.generated['params']['sigmoid_stop_voltage']):.4f} V",
+                    f"Loops: {len(self.generated.get('sigmoid_manifest', {}).get('set_voltage_sequence', []))}",
+                    f"Set range: {float(self.generated['params']['sigmoid_start_voltage']):.4f} V to {float(self.generated['params']['sigmoid_stop_voltage']):.4f} V",
                     f"CSV: {csv_path}",
                     f"Protocol: {json_path}",
                     f"Manifest: {manifest_path}",

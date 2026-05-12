@@ -1013,6 +1013,10 @@ class Vipsa_Methods():
                 current_autorange=current_autorange,
             )
             #pulse_data = SMU.list_IV_sweep_manual(pulse_path, compliance, compliance*100, delay=pulse_width, adr=SMU_adress)
+            current_step_params = {}
+            if isinstance(protocol_context, dict):
+                current_step_params = protocol_context.get("current_step_params", {}) or {}
+
             pulse_metadata = self._build_measurement_metadata(
                 data_name="Pulse",
                 sample_no=sample_no,
@@ -1025,6 +1029,8 @@ class Vipsa_Methods():
                     "set_acquire_delay_s": set_acquire_delay,
                     "pulse_path": pulse_path,
                     "current_autorange": current_autorange,
+                    "pulse_mode": current_step_params.get("pulse_mode"),
+                    "sigmoid_manifest_path": current_step_params.get("sigmoid_manifest_path"),
                 },
                 protocol_context=protocol_context,
             )
